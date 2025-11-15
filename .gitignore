@@ -1,0 +1,17 @@
+cat > .gitignore << 'EOF'
+# Ignore data files – TRD telemetry and processed big CSVs should not be pushed
+data/
+*.zip
+*.parquet
+*.feather
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
+
+# OS / editor noise
+.DS_Store
+.vscode/
+EOF
