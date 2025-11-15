@@ -1,7 +1,16 @@
+# GR RaceCraft Copilot
+
+# DataScienceHackbyToyota
+
+Thanks Giving side hustle
+
+# GR RaceCraft Copilot
+
 **Hackathon:** Hack the Track presented by Toyota GR  
 **Categories:** Real-Time Analytics (primary), Wildcard (Mini Multiverse Simulator)
 
 Team:
+
 - Tue Tran Minh — Virginia Tech
 - Nguyen Nguyen Phan — Virginia Tech
 
@@ -25,11 +34,13 @@ we can plug in TRD CSVs as soon as access is available.
 ## 2. Planned Product Outcomes
 
 1. **Real-Time Strategy Brain (Engineer Mode)**
+
    - Reconstruct laps, stints, and sectors from TRD telemetry + track maps.
    - Simulate pit windows and basic caution scenarios in real time.
    - Recommend an optimal pit window with expected time/position gain and a short explanation.
 
 2. **Driver Insight Layer**
+
    - Break performance into S1/S2/S3 using track-specific sector geometry.
    - Quantify tire degradation and stint consistency.
    - Highlight where the driver is losing time and how that affects strategy calls.
@@ -46,7 +57,7 @@ we can plug in TRD CSVs as soon as access is available.
 
 ## 3. Repository Structure (current)
 
-```text
+````text
 DataScienceHackbyToyota/
 ├─ src/
 │  ├─ __init__.py
@@ -68,8 +79,12 @@ DataScienceHackbyToyota/
 
   ```bash
   python -m src.telemetry_loader data/raw/vir/telemetry.csv virginia-international-raceway
-  ```
+````
 
 This will:
-	•	Infer columns (vehicle id, meta_time, lap distance).
-	•	Reconstruct laps and sectors.
+• Infer columns (vehicle id, meta_time, lap distance).
+• Reconstruct laps and sectors.
+
+• Output a per-lap summary table in memory (later we can save to data/processed/).
+
+    •	Output a per-lap summary table in memory (later we can save to data/processed/).
