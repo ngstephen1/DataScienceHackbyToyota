@@ -1,0 +1,16 @@
+﻿Definition of Abstract Variables;;
+Index;Variables;Definition
+1;GAP_FIRST;The total time difference between the current competitor and the leader of the race
+2;GAP_PREVIOUS;The time difference between the current competitor and the competitor ahead of them
+3;FL;Fastest Lap
+4;ELAPSED;Total race time
+5;PIC;Position in class
+6;S1_IMPROVEMENT;"Refers to the time difference between the current lap's Sector 1 time and the competitor's personal best time for that same sector. 
+Positive Value usually means the current sector time was slower than the personal best for that sector."
+7;S1_LARGE;A specific, often cumulative or detailed, format of the Sector 1 lap time.
+8;S1;Sector 1 
+9;CROSSING_FINISH_LINE_IN_PIT;"It indicates whether a car crossed the main start/finish line while it was officially entering or within the pit lane.
+It said B(Blank) means that The competitor completed that lap by driving across the timing line on the main racing track."
+10;GF;Team’s name
+11;Time;A duration of 1 lap
+12;TIME_UTC_SECONDS;This is a representation of time as the total number of seconds that have elapsed since a fixed reference point
