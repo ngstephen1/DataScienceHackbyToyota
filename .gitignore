@@ -9,7 +9,7 @@ data/
 __pycache__/
 *.pyc
 .venv/
-.ipynb_checkpoints/
+
 
 # OS / editor noise
 .DS_Store
