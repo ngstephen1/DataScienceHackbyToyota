@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # GR RaceCraft Copilot
 
 # DataScienceHackbyToyota
@@ -6,6 +7,8 @@ Thanks Giving side hustle
 
 # GR RaceCraft Copilot
 
+=======
+>>>>>>> 8b4568af (move on to virginia track)
 **Hackathon:** Hack the Track presented by Toyota GR  
 **Categories:** Real-Time Analytics (primary), Wildcard (Mini Multiverse Simulator)
 
@@ -82,9 +85,14 @@ DataScienceHackbyToyota/
 ````
 
 This will:
+<<<<<<< HEAD
 • Infer columns (vehicle id, meta_time, lap distance).
 • Reconstruct laps and sectors.
 
 • Output a per-lap summary table in memory (later we can save to data/processed/).
 
     •	Output a per-lap summary table in memory (later we can save to data/processed/).
+=======
+	•	Infer columns (vehicle id, meta_time, lap distance).
+	•	Reconstruct laps and sectors.
+>>>>>>> 8b4568af (move on to virginia track)

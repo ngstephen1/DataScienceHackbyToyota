@@ -32,12 +32,40 @@ def load_lap_features(track_id: str, race: str, car_id: str) -> pd.DataFrame:
         "circuit-of-the-americas": "cota",
     }
 
+<<<<<<< HEAD
     if track_id not in track_dirs:
         raise ValueError(f"Track {track_id} not wired yet in load_lap_features().")
 
     short = track_dirs[track_id]
     race_lower = race.lower()
     proc_dir = DATA_PROCESSED / short
+=======
+    Convention (per track):
+
+        data/processed/<short_name>/<short_name>_<race_lower>_<CAR_ID>_lap_features.csv
+
+    Example for Barber R2, GR86-002-000:
+        data/processed/barber/barber_r2_GR86-002-000_lap_features.csv
+
+    You need to generate the corresponding files for VIR, COTA, etc.
+    """
+
+    track_dirs = {
+        "barber-motorsports-park": "barber",
+        "virginia-international-raceway": "virginia",
+        "circuit-of-the-americas": "cota",
+    }
+
+    if track_id not in track_dirs:
+        raise ValueError(f"Track {track_id} not wired yet in load_lap_features().")
+
+    short = track_dirs[track_id]
+
+    # race is like "R1" or "R2" from the UI
+    race_lower = race.lower()  # "r1" / "r2"
+
+    proc_dir = ROOT / "data" / "processed" / short
+>>>>>>> 8b4568af (move on to virginia track)
     fname = f"{short}_{race_lower}_{car_id}_lap_features.csv"
     path = proc_dir / fname
 
@@ -88,7 +116,11 @@ st.sidebar.header("Configuration")
 track_options = {
     "Barber Motorsports Park": "barber-motorsports-park",
     "Virginia International Raceway": "virginia-international-raceway",
+<<<<<<< HEAD
     "Circuit of the Americas": "circuit-of-the-americas",
+=======
+    "Circuit of the Americas": "circuit-of-the-americas",  # future
+>>>>>>> 8b4568af (move on to virginia track)
 }
 track_label = st.sidebar.selectbox("Track", list(track_options.keys()), index=0)
 track_id = track_options[track_label]
