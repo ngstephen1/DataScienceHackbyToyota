@@ -526,29 +526,34 @@ def main() -> None:
     (lap_marker,) = ax_chart.plot([lap_nums[0]], [lap_times[0]], "ro")
     ax_chart.grid(True, alpha=0.3)
 
-    # Sliders
-    slider_ax_deg = plt.axes([0.20, 0.05, 0.18, 0.03])
-    slider_ax_pit = plt.axes([0.42, 0.05, 0.18, 0.03])
-    slider_ax_risk = plt.axes([0.64, 0.05, 0.18, 0.03])
+    # Sliders (added Speed x slider)
+    slider_ax_deg = plt.axes([0.10, 0.05, 0.18, 0.03])
+    slider_ax_pit = plt.axes([0.32, 0.05, 0.18, 0.03])
+    slider_ax_risk = plt.axes([0.54, 0.05, 0.18, 0.03])
+    slider_ax_speed = plt.axes([0.76, 0.05, 0.18, 0.03])
 
     s_deg = Slider(slider_ax_deg, "Tyre deg x", 0.5, 1.5, valinit=1.0)
     s_pit = Slider(slider_ax_pit, "Pit loss x", 0.5, 1.5, valinit=1.0)
     s_risk = Slider(slider_ax_risk, "Risk mode", 0.0, 2.0, valinit=1.0)
+    s_speed = Slider(slider_ax_speed, "Speed x", 0.25, 3.0, valinit=1.0)
 
     slider_vals = {
         "deg_scale": 1.0,
         "pit_scale": 1.0,
         "risk": 1.0,
+        "speed": 1.0,
     }
 
     def _on_slider_change(_):
         slider_vals["deg_scale"] = float(s_deg.val)
         slider_vals["pit_scale"] = float(s_pit.val)
         slider_vals["risk"] = float(s_risk.val)
+        slider_vals["speed"] = float(s_speed.val)
 
     s_deg.on_changed(_on_slider_change)
     s_pit.on_changed(_on_slider_change)
     s_risk.on_changed(_on_slider_change)
+    s_speed.on_changed(_on_slider_change)
 
     FPS = 25
     INTERVAL_MS = int(1000 / FPS)
@@ -577,7 +582,11 @@ def main() -> None:
         frames_this_lap = max(5, int(FPS * lap_time))
         state["frames_this_lap"] = frames_this_lap
 
-        progress = fi / frames_this_lap
+        speed = slider_vals["speed"]
+
+        # progress scaled by speed slider
+        progress = (fi * speed) / frames_this_lap
+
         if progress >= 1.0:
             # Complete one circuit -> advance to next lap
             lap_idx = (lap_idx + 1) % len(metrics_table)
@@ -589,11 +598,13 @@ def main() -> None:
             frames_this_lap = max(5, int(FPS * lap_time))
             state["frames_this_lap"] = frames_this_lap
             progress = 0.0
+            fi = 0
         else:
             state["frame_in_lap"] = fi + 1
 
         # 0–1 along path -> map to track polyline
         i_path = int(progress * (len(xs_plot) - 1))
+        i_path = max(0, min(len(xs_plot) - 1, i_path))
         x = xs_plot[i_path]
         y = ys_plot[i_path]
 
@@ -798,6 +809,7 @@ def main() -> None:
             "slider_deg_scale": float(deg_scale),
             "slider_pit_scale": float(pit_scale),
             "slider_risk_mode": float(risk),
+            "slider_speed": float(speed),
             "metrics": metrics,
         }
 
