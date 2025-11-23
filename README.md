@@ -4,7 +4,7 @@
 <div align="center">
 
 
-# DATASCIENCEHACKBYTOYOTA
+# DATASCIENCE HACK BY TOYOTA - Hack The Track
 
 <em>Accelerate Insights, Dominate Race Strategies Instantly</em>
 
@@ -31,6 +31,7 @@
 ## Table of Contents
 
 - [Overview](#overview)
+- [Data Sources](#data-sources)
 - [Getting Started](#getting-started)
     - [Prerequisites](#prerequisites)
     - [Installation](#installation)
@@ -48,17 +49,199 @@
 
 ## Overview
 
-DataScienceHackbyToyota is an advanced simulation and analysis platform tailored for motorsport data enthusiasts and race engineers. It combines interactive visualizations, telemetry processing, and AI-driven insights to optimize race strategies, improve driver performance, and facilitate real-time coaching. The core features include animated lap visualizations, track digitization tools, performance degradation modeling, and comprehensive race strategy simulations—all within an integrated, data-driven environment.
+DataScienceHackbyToyota is an advanced simulation and analysis platform built around **Toyota GR86 GR Cup** data, with a focus on **Barber Motorsports Park**. It combines interactive visualizations, large-scale telemetry processing, and AI-driven insights (via Google Gemini) to help a race engineer answer questions like:
+
+- *What’s our ideal pit window right now?*
+- *How fast are our tyres degrading by stint and by sector?*
+- *What should we do if a caution comes out in the next 2–3 laps?*
+
+The system links:
+
+- A **Tkinter + Matplotlib race map** with a moving car icon, running on the actual digitised track layout.
+- A **Streamlit “race engineer console”** that updates from a live JSON state file.
+- A **strategy engine** that simulates tyre degradation, pit windows, and caution scenarios.
+- **Gemini 2.5 Flash** for real-time natural-language insights on top of your metrics and notebook conclusions.
 
 **Why DataScienceHackbyToyota?**
 
-This project empowers developers and race teams to analyze complex race data efficiently. The core features include:
+This project is designed to make massive, messy racing data usable in real time:
 
-- 🎯 **Interactive Visualizations:** Dynamic, animated lap displays and real-time data updates for insightful race analysis.
-- 🚗 **Telemetry & Track Processing:** Tools for loading, processing, and visualizing telemetry data and digitizing track layouts.
-- ⚙️ **Performance & Strategy Modeling:** Vehicle performance degradation, pit stop planning, and Monte Carlo race simulations.
-- 🤖 **AI-Generated Insights:** Advanced commentary and strategy recommendations to support race-day decisions.
-- 📊 **Modular Architecture:** Seamless integration of data extraction, analysis, and visualization components for flexible workflows.
+- 🎯 **Interactive Visualizations:** Animated car running around Barber, lap-time charts, and live race-engineer panels.
+- 🚗 **Telemetry & Track Processing:** Tools to ingest TRD telemetry, build lap features, and digitise the Barber track from a circuit map.
+- ⚙️ **Performance & Strategy Modeling:** Tyre degradation modeling, pit lane loss, strategy multiverse simulations, and ideal pit-lap discovery.
+- 🤖 **AI-Generated Insights:** Gemini-powered “radio feed” style commentary and recommendations updated off the current lap context.
+- 📊 **Modular Architecture:** Notebooks for exploration, Python modules for reusable logic, and a Streamlit UI for demo / race-day scenarios.
+
+---
+
+## Data Sources
+
+This project uses **official hackathon data and maps** from:
+
+- **TRD Dev – DataScienceHackbyToyota 2025**  
+  Dataset page: `https://trddev.com/hackathon-2025/`
+
+- **Barber Motorsports Park telemetry bundle**  
+  File: `barber-motorsports-park.zip`  
+  ~20 CSV files including:
+  - `R1_barber_telemetry_data.csv` — **Rows:** 11,556,519 • **Cols:** 13  
+  - `R2_barber_telemetry_data.csv` — **Rows:** 11,749,604 • **Cols:** 13  
+  plus lap timing, weather, best-10 laps, results, etc.
+
+- **Barber circuit map (official PDF)**  
+  URL: `https://trddev.com/hackathon-2025/Barber_Circuit_Map.pdf`
+
+In this repo, the track map image used for digitising and visualisation is:
+
+```text
+data/track_maps/IMG_4381.jpg
+```
+
+Embedded preview:
+
+![Barber Motorsports Park circuit map](data/track_maps/IMG_4381.jpg)
+
+The digitised centerline (from manual clicks on this map) lives in:
+
+```text
+data/track_geom/barber_track_xy.csv
+data/track_geom/barber_track_xy_s.csv
+```
+
+These are what the **car icon animation** uses.
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- **Python:** 3.10+ (tested with 3.10 / 3.11 / 3.13)
+- **Package Manager:** `pip`
+- (Optional) **virtualenv / venv** for isolation
+- (Optional but recommended) **Google Gemini API key** for AI insights
+
+### Installation
+
+1. **Clone the repository**
+
+```sh
+git clone https://github.com/ngstephen1/DataScienceHackbyToyota.git
+cd DataScienceHackbyToyota
+```
+
+2. **Create & activate a virtual environment (recommended)**
+
+```sh
+python -m venv .venv
+source .venv/bin/activate        # on macOS / Linux
+# .venv\Scriptsctivate         # on Windows PowerShell
+```
+
+3. **Install dependencies**
+
+```sh
+pip install -r requirements.txt
+```
+
+4. **(Optional) Configure Gemini**
+
+Set your Gemini API key and model name (Gemini 2.5 Flash):
+
+```sh
+export GEMINI_API_KEY="your-key-here"
+export GEMINI_MODEL_NAME="gemini-2.5-flash"
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:GEMINI_API_KEY="your-key-here"
+$env:GEMINI_MODEL_NAME="gemini-2.5-flash"
+```
+
+You can quickly verify the key with:
+
+```sh
+python - << 'PY'
+import os, google.generativeai as genai
+api_key = os.getenv("GEMINI_API_KEY")
+model_name = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash")
+if not api_key:
+    raise SystemExit("GEMINI_API_KEY is not set.")
+genai.configure(api_key=api_key)
+print(f"Trying model: {model_name}")
+model = genai.GenerativeModel(model_name)
+resp = model.generate_content("Say exactly: Gemini OK.")
+print("Response:", resp.text.strip())
+PY
+```
+
+---
+
+### Usage
+
+There are **two main entrypoints**: the **animated map** and the **Streamlit race-engineer console**. They communicate through `data/live/` JSON files.
+
+#### 1. Run the animated Barber map (Tkinter + Matplotlib)
+
+This opens a window showing the **Barber map** with a **car icon** moving along the digitised track, plus real-time metrics and Gemini insights:
+
+```sh
+python src/barber_lap_anim.py
+```
+
+This script:
+
+- Loads the Barber track map (`data/track_maps/barber_map.png` / `IMG_4381.jpg`).
+- Loads digitised centerline from `data/track_geom/barber_track_xy_s.csv`.
+- Reads lap features and strategy summaries from `data/processed/barber/...`.
+- Animates one car icon per lap based on lap times.
+- Writes live state to:
+
+```text
+data/live/barber_state.json
+data/live/live_state_barber.json
+```
+
+#### 2. Run the Streamlit “Race Engineer Console”
+
+In another terminal (same venv):
+
+```sh
+streamlit run streamlit_app.py
+```
+
+The Streamlit app:
+
+- Polls the `data/live/*.json` files written by `barber_lap_anim.py`.
+- Shows:
+  - Live lap number, stint lap, lap progress, and lap time.
+  - Tyre life, degradation, pit-window metrics, caution scenarios.
+  - Sliders to adjust **tyre degradation scaling**, **pit loss scaling**, and **risk mode**.
+  - Plots that update “as if” in real time.
+  - An **engineering radio feed** with both rule-based and Gemini-generated insights.
+
+If your Gemini key is configured, you’ll also see **Gemini insights** per lap (short bullet-point radio style).
+
+> 💡 **Tip**  
+> For a complete “live” demo, run:
+> - Terminal 1: `python src/barber_lap_anim.py`  
+> - Terminal 2: `streamlit run streamlit_app.py`
+
+---
+
+### Testing
+
+There is **no full automated test suite** yet. For a quick sanity check:
+
+```sh
+python tests/manual_test.py
+```
+
+This exercises core loading and geometry logic to ensure things run without errors.
+
+(You’re encouraged to add `pytest` tests for `src/` modules if you extend this project.)
 
 ---
 
@@ -66,15 +249,15 @@ This project empowers developers and race teams to analyze complex race data eff
 
 |      | Component       | Details                                                                                     |
 | :--- | :-------------- | :------------------------------------------------------------------------------------------ |
-| ⚙️  | **Architecture**  | <ul><li>Modular Jupyter Notebook workflows for data analysis and modeling</li><li>Separation of data processing, visualization, and modeling scripts</li></ul> |
-| 🔩 | **Code Quality**  | <ul><li>Consistent use of Python best practices</li><li>Clear function definitions and comments in notebooks</li></ul> |
-| 📄 | **Documentation** | <ul><li>Basic README with project overview</li><li>Usage instructions for notebooks and scripts</li></ul> |
-| 🔌 | **Integrations**  | <ul><li>Uses `requirements.txt` for dependency management</li><li>Integrates popular data science libraries: `numpy`, `pandas`, `matplotlib`, `streamlit`</li></ul> |
-| 🧩 | **Modularity**    | <ul><li>Separate notebooks for data ingestion, analysis, visualization</li><li>Reusable functions in Python modules</li></ul> |
-| 🧪 | **Testing**       | <ul><li>No explicit testing framework detected; potential for unit tests in Python modules</li></ul> |
-| ⚡️  | **Performance**   | <ul><li>Uses efficient libraries (`numpy`, `pandas`) for data processing</li><li>Streamlit for interactive dashboards, optimized for quick rendering</li></ul> |
-| 🛡️ | **Security**      | <ul><li>No specific security measures implemented; typical for data analysis projects</li></ul> |
-| 📦 | **Dependencies**  | <ul><li>Managed via `requirements.txt`</li><li>Includes `jupyter`, `streamlit`, `matplotlib`, `pandas`, `numpy`, `ipykernel`</li></ul> |
+| ⚙️  | **Architecture**  | <ul><li>Modular Jupyter Notebook workflows for data analysis and modeling</li><li>Separation of data processing (`src/`), visualization (`barber_lap_anim.py`, `streamlit_app.py`), and strategy logic (`strategy_engine.py`)</li></ul> |
+| 🔩 | **Code Quality**  | <ul><li>Clear function boundaries in modules</li><li>Notebooks used for exploratory analysis, with logic gradually migrated into reusable functions</li></ul> |
+| 📄 | **Documentation** | <ul><li>README with overview, data sources, and how to run</li><li>`RUN.md` for step-by-step setup and demo instructions</li></ul> |
+| 🔌 | **Integrations**  | <ul><li>`requirements.txt` for dependency management</li><li>Integrates `numpy`, `pandas`, `matplotlib`, `streamlit`, `google-generativeai`</li></ul> |
+| 🧩 | **Modularity**    | <ul><li>Separate notebooks for VIR vs Barber, race 1 vs race 2</li><li>Reusable strategy, track-meta, and telemetry loader modules</li></ul> |
+| 🧪 | **Testing**       | <ul><li>Basic manual tests via `tests/manual_test.py` (no formal unit test suite yet)</li></ul> |
+| ⚡️  | **Performance**   | <ul><li>Handles 10M+ row telemetry CSVs using `pandas` and columnar workflows</li><li>Animation and dashboard driven by pre-aggregated lap features</li></ul> |
+| 🛡️ | **Security**      | <ul><li>No external services beyond Gemini API; API key is read from environment variables</li></ul> |
+| 📦 | **Dependencies**  | <ul><li>Managed via `requirements.txt`</li><li>Includes `jupyter`, `streamlit`, `matplotlib`, `pandas`, `numpy`, `ipykernel`, `google-generativeai`</li></ul> |
 
 ---
 
@@ -84,23 +267,14 @@ This project empowers developers and race teams to analyze complex race data eff
 └── DataScienceHackbyToyota/
     ├── README.md
     ├── RUN.md
-    ├── notebooks
-    │   ├── .ipynb_checkpoints
-    │   ├── 01_explore_vir.ipynb
-    │   ├── 02_vir_sectors_r1r2.ipynb
-    │   ├── 03_barber_telemetry_r1.ipynb
-    │   ├── 04_barber_lap_times_r1.ipynb
-    │   ├── 05_barber_sections_r1.ipynb
-    │   ├── 06_barber_telemetry_r2.ipynb
-    │   ├── 07_barber_lap_times_r2.ipynb
-    │   ├── 08_barber_sections_r2.ipynb
-    │   ├── 09_barber_driver_profile.ipynb
-    │   ├── 10_barber_strategy_mvp.ipynb
-    │   ├── 13_vir_telemetry_r1.ipynb
-    │   └── data
+    ├── data
+    │   ├── raw/           # Original TRD telemetry, results, weather, etc.
+    │   ├── processed/     # Derived lap features, sector summaries, strategy outputs
+    │   ├── track_geom/    # Digitised track centerline for Barber
+    │   └── track_maps/    # Track images (PDF-derived JPG/PNG) + car icon
+    ├── notebooks          # VIR + Barber exploration, lap times, sections, strategy MVP
     ├── requirements.txt
     ├── src
-    │   ├── __init__.py
     │   ├── barber_build_track_s.py
     │   ├── barber_digitize_track.py
     │   ├── barber_lap_anim.py
@@ -109,10 +283,11 @@ This project empowers developers and race teams to analyze complex race data eff
     │   ├── strategy_cli.py
     │   ├── strategy_engine.py
     │   ├── telemetry_loader.py
-    │   ├── test.py
     │   ├── track_meta.py
     │   └── track_utils.py
-    ├── streamlit_app.py
+    ├── streamlit_app.py   # Live dashboard / race engineer console
+    ├── tests
+    │   └── manual_test.py
     └── tools
         └── extract_barber_r1_vehicle.py
 ```
@@ -121,283 +296,240 @@ This project empowers developers and race teams to analyze complex race data eff
 
 ### Project Index
 
+> ⚠️ *Auto-generated summaries below; you can ignore this section if you just want to run the demo. Descriptions have been lightly cleaned up to reflect racing context (Barber Motorsports Park, VIR, telemetry, strategy, etc.).*
+
 <details open>
-	<summary><b><code>DATASCIENCEHACKBYTOYOTA/</code></b></summary>
-	<!-- __root__ Submodule -->
-	<details>
-		<summary><b>__root__</b></summary>
-		<blockquote>
-			<div class='directory-path' style='padding: 8px 0; color: #666;'>
-				<code><b>⦿ __root__</b></code>
-			<table style='width: 100%; border-collapse: collapse;'>
-			<thead>
-				<tr style='background-color: #f8f9fa;'>
-					<th style='width: 30%; text-align: left; padding: 8px;'>File Name</th>
-					<th style='text-align: left; padding: 8px;'>Summary</th>
-				</tr>
-			</thead>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/README.md'>README.md</a></b></td>
-					<td style='padding: 8px;'>- Provides a comprehensive simulation and analysis platform for Toyota GR86 GR Cup data at Barber Motorsports Park<br>- Enables strategy comparison, driver performance insights, and real-time race coaching through animated lap visualization, telemetry processing, and AI-generated strategy commentary, supporting race engineering decisions and race-day scenario testing within an integrated, data-driven environment.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/streamlit_app.py'>streamlit_app.py</a></b></td>
-					<td style='padding: 8px;'>- Streamlit_app.pyThis file serves as the main entry point for the applications user interface, leveraging Streamlit to facilitate interactive data visualization and user engagement<br>- It orchestrates the presentation layer by loading, displaying, and updating real-time data related to track geometry and live session states<br>- Within the broader architecture, <code>streamlit_app.py</code> acts as the front-end interface that connects users to the underlying data processing and generative AI functionalities, enabling dynamic exploration and monitoring of track and session information in an accessible, visual format.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/requirements.txt'>requirements.txt</a></b></td>
-					<td style='padding: 8px;'>- Facilitates data analysis and visualization workflows by managing essential dependencies such as pandas, numpy, matplotlib, and streamlit<br>- Supports interactive exploration and presentation of data insights within the project, enabling seamless integration of data processing, plotting, and web app deployment<br>- Ensures consistent environment setup for efficient development and reproducibility across the entire codebase.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/RUN.md'>RUN.md</a></b></td>
-					<td style='padding: 8px;'>- Provides step-by-step instructions to set up and launch the web-based visualization for the Barber project<br>- It guides users through cloning the repository, creating an isolated environment, installing dependencies, and running the Streamlit application to visualize data insights interactively<br>- This facilitates easy exploration and presentation of data analysis results within the overall project architecture.</td>
-				</tr>
-			</table>
-		</blockquote>
-	</details>
-	<!-- src Submodule -->
-	<details>
-		<summary><b>src</b></summary>
-		<blockquote>
-			<div class='directory-path' style='padding: 8px 0; color: #666;'>
-				<code><b>⦿ src</b></code>
-			<table style='width: 100%; border-collapse: collapse;'>
-			<thead>
-				<tr style='background-color: #f8f9fa;'>
-					<th style='width: 30%; text-align: left; padding: 8px;'>File Name</th>
-					<th style='text-align: left; padding: 8px;'>Summary</th>
-				</tr>
-			</thead>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/src/pit_model.py'>pit_model.py</a></b></td>
-					<td style='padding: 8px;'>- Implements a vehicle lap analysis pipeline to identify pit laps, segment stints, and model lap time degradation over race laps<br>- Facilitates understanding of vehicle performance trends by detecting pit stops, organizing laps into stints, and fitting a linear degradation model, supporting performance optimization and strategic decision-making in motorsport analytics.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/src/barber_digitize_track.py'>barber_digitize_track.py</a></b></td>
-					<td style='padding: 8px;'>- Provides an interactive tool to digitize the Barber Motorsports Park track centerline by allowing users to click along a track map image<br>- If interactivity isnt available, generates a synthetic oval as a fallback<br>- Outputs normalized and pixel coordinates of the selected points into a CSV file, integrating seamlessly into the broader project for track geometry analysis and visualization.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/src/telemetry_loader.py'>telemetry_loader.py</a></b></td>
-					<td style='padding: 8px;'>- Provides tools to load, process, and summarize vehicle telemetry data from CSV files<br>- Facilitates lap and sector identification based on distance metrics, enabling detailed per-lap analysis and track segmentation<br>- Supports flexible data extraction for performance metrics, supporting race analysis and track-specific insights within the overall telemetry processing architecture.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/src/strategy_engine.py'>strategy_engine.py</a></b></td>
-					<td style='padding: 8px;'>- Provides a comprehensive framework for simulating and analyzing race strategies, focusing on lap time estimation, tyre degradation, pit stop planning, and caution periods<br>- Facilitates Monte Carlo race simulations to evaluate strategy performance, enabling real-time insights and decision-making for optimizing race outcomes within the overall architecture.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/src/track_utils.py'>track_utils.py</a></b></td>
-					<td style='padding: 8px;'>- Provides a utility to determine the current track sector based on lap distance, facilitating real-time segmentation of vehicle positions within the racing circuit<br>- It leverages track metadata to accurately map distances to sector indices, supporting features like lap timing, telemetry analysis, and race strategy within the overall simulation or telemetry processing architecture.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/src/test.py'>test.py</a></b></td>
-					<td style='padding: 8px;'>- Visualizes the digitized centerline of the Barber track by loading coordinate data and generating a scaled plot<br>- It supports the broader project by providing a clear graphical representation of track geometry, facilitating analysis and validation within the overall data processing and simulation workflows<br>- This enhances understanding of track layout for subsequent modeling and testing activities.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/src/barber_lap_anim.py'>barber_lap_anim.py</a></b></td>
-					<td style='padding: 8px;'>- The <code>src/barber_lap_anim.py</code> file is a core component responsible for visualizing and animating lap data within the project<br>- It orchestrates the creation of dynamic, interactive plots that depict lap-related metrics, leveraging data processing and visualization libraries<br>- Additionally, it integrates live state export functionality to facilitate real-time updates, and conditionally interfaces with the Gemini AI API for advanced generative capabilities<br>- Overall, this module enables insightful, animated representations of lap performance, serving as a key visualization tool within the broader architecture.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/src/live_state.py'>live_state.py</a></b></td>
-					<td style='padding: 8px;'>- Manages persistent storage of live state data for individual tracks within the project<br>- Facilitates retrieval and atomic updates of JSON-formatted state information, ensuring data consistency and integrity across the applications runtime<br>- Integrates seamlessly into the overall architecture by maintaining real-time status tracking for each track, supporting dynamic data management and system responsiveness.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/src/track_meta.py'>track_meta.py</a></b></td>
-					<td style='padding: 8px;'>- Defines metadata for various race tracks, including identifiers, names, pit lane loss times, lengths, and optional geometric paths<br>- Serves as a centralized reference for track-specific information, supporting accurate simulation, analysis, and visualization within the broader racing data processing architecture<br>- Facilitates consistent access to track attributes across the project.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/src/barber_build_track_s.py'>barber_build_track_s.py</a></b></td>
-					<td style='padding: 8px;'>- Calculates and appends the cumulative and normalized arc length along a race track based on coordinate data<br>- Facilitates precise track segmentation and analysis by converting raw positional points into a standardized measure of distance, supporting downstream tasks such as lap timing, vehicle positioning, and track mapping within the overall simulation or analysis architecture.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/src/strategy_cli.py'>strategy_cli.py</a></b></td>
-					<td style='padding: 8px;'>- Provides a command-line interface for recommending optimal pit strategies in racing scenarios by analyzing lap data, simulating various strategies, and evaluating their performance under different caution conditions<br>- Integrates with the broader race simulation architecture to generate data-driven insights, enabling users to select strategies with the highest win probability and best timing, thereby supporting strategic decision-making in race planning.</td>
-				</tr>
-			</table>
-		</blockquote>
-	</details>
-	<!-- notebooks Submodule -->
-	<details>
-		<summary><b>notebooks</b></summary>
-		<blockquote>
-			<div class='directory-path' style='padding: 8px 0; color: #666;'>
-				<code><b>⦿ notebooks</b></code>
-			<table style='width: 100%; border-collapse: collapse;'>
-			<thead>
-				<tr style='background-color: #f8f9fa;'>
-					<th style='width: 30%; text-align: left; padding: 8px;'>File Name</th>
-					<th style='text-align: left; padding: 8px;'>Summary</th>
-				</tr>
-			</thead>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/notebooks/08_barber_sections_r2.ipynb'>08_barber_sections_r2.ipynb</a></b></td>
-					<td style='padding: 8px;'>- The <code>notebooks/08_barber_sections_r2.ipynb</code> file serves as a key analytical component within the project, focusing on segmenting and analyzing barber-related data<br>- Its primary purpose is to process and visualize data to identify distinct barber sections or categories, supporting insights into customer segmentation, service patterns, or operational areas<br>- This notebook contributes to the broader data exploration and modeling efforts by providing structured analysis that informs decision-making and enhances understanding of barber-related workflows within the overall system architecture.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/notebooks/07_barber_lap_times_r2.ipynb'>07_barber_lap_times_r2.ipynb</a></b></td>
-					<td style='padding: 8px;'>- SummaryThis notebook analyzes lap time data related to barber racing events, serving as a key component in the broader project focused on performance analysis and insights extraction<br>- It processes and visualizes lap time metrics to identify patterns, trends, and potential areas for performance improvement<br>- By doing so, it supports the overall goal of enhancing race strategies and understanding driver performance within the larger codebase.---If youd like a more detailed or tailored summary, please provide additional content or specific focus areas!</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/notebooks/05_barber_sections_r1.ipynb'>05_barber_sections_r1.ipynb</a></b></td>
-					<td style='padding: 8px;'>- The <code>notebooks/05_barber_sections_r1.ipynb</code> file serves as an analytical step within the project, focusing on segmenting and analyzing barber shop data<br>- Its primary purpose is to process and visualize data related to barber sections, contributing to the broader goal of understanding spatial or categorical distributions within the dataset<br>- This notebook supports the overall architecture by enabling data exploration and feature extraction, which are essential for building insights or models in subsequent stages of the project.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/notebooks/06_barber_telemetry_r2.ipynb'>06_barber_telemetry_r2.ipynb</a></b></td>
-					<td style='padding: 8px;'>- This notebook, <code>06_barber_telemetry_r2.ipynb</code>, serves as a data analysis and validation tool within the broader project architecture<br>- Its primary purpose is to process, analyze, and visualize telemetry data related to barber operations, enabling insights into system performance and usage patterns<br>- By performing data validation and generating visual summaries, it supports the overall goal of monitoring and improving the reliability and efficiency of the telemetry infrastructure across the codebase.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/notebooks/04_barber_lap_times_r1.ipynb'>04_barber_lap_times_r1.ipynb</a></b></td>
-					<td style='padding: 8px;'>- The <code>notebooks/04_barber_lap_times_r1.ipynb</code> file serves as an analytical exploration within the project, focusing on processing and visualizing lap time data related to barber race events<br>- Its primary purpose is to analyze race timing patterns, identify performance trends, and generate insights that support the broader goal of optimizing race strategies or understanding race dynamics<br>- This notebook complements the overall architecture by providing data-driven insights that can inform model development, feature engineering, or decision-making processes across the project.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/notebooks/02_vir_sectors_r1r2.ipynb'>02_vir_sectors_r1r2.ipynb</a></b></td>
-					<td style='padding: 8px;'>- The <code>notebooks/02_vir_sectors_r1r2.ipynb</code> notebook serves as a key analytical component within the project, focusing on the exploration and visualization of virtual sector data across different regions<br>- Its primary purpose is to process, analyze, and generate insights related to sector distributions and patterns, supporting the broader goal of understanding regional variations and trends<br>- This notebook facilitates data-driven decision-making by transforming raw data into meaningful visual representations, thereby contributing to the projects overarching architecture of regional analysis and sector modeling.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/notebooks/10_barber_strategy_mvp.ipynb'>10_barber_strategy_mvp.ipynb</a></b></td>
-					<td style='padding: 8px;'>- The <code>notebooks/10_barber_strategy_mvp.ipynb</code> file serves as a core component for demonstrating and validating the Barber Strategy within the project<br>- Its primary purpose is to showcase a minimal viable product (MVP) implementation of the trading strategy, enabling users to understand, test, and evaluate the effectiveness of the approach in a controlled environment<br>- This notebook integrates key data processing, strategy logic, and performance analysis, acting as a practical example that aligns with the broader architecture of the project, which emphasizes modularity, data-driven decision-making, and strategy validation.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/notebooks/01_explore_vir.ipynb'>01_explore_vir.ipynb</a></b></td>
-					<td style='padding: 8px;'>- Overview of <code>notebooks/01_explore_vir.ipynb</code>This notebook serves as an initial exploratory analysis of the VIR Tele dataset within the broader project architecture<br>- Its primary purpose is to understand the datas structure, quality, and key characteristics, laying the groundwork for subsequent data processing, modeling, and integration tasks across the codebase<br>- By providing insights into the dataset, this notebook helps inform decisions on data handling and feature engineering, ensuring the overall system effectively leverages the VIR Tele data for its intended analytical or predictive objectives.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/notebooks/09_barber_driver_profile.ipynb'>09_barber_driver_profile.ipynb</a></b></td>
-					<td style='padding: 8px;'>- The <code>notebooks/09_barber_driver_profile.ipynb</code> file serves as an analytical and exploratory notebook within the project, focusing on profiling barber and driver data<br>- Its primary purpose is to analyze, visualize, and derive insights from the profile information of key user segments, supporting the broader goal of understanding user behaviors and characteristics<br>- This notebook contributes to the overall architecture by enabling data-driven decision-making and feature refinement related to user profiles, ultimately enhancing the systems ability to personalize experiences and improve service delivery across the platform.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/notebooks/13_vir_telemetry_r1.ipynb'>13_vir_telemetry_r1.ipynb</a></b></td>
-					<td style='padding: 8px;'>- Defines and retrieves metadata for Virginia International Raceway, integrating track-specific details into the broader telemetry data processing framework<br>- Facilitates contextual understanding of track characteristics, enabling accurate analysis and modeling within the overall telemetry and race data architecture<br>- Supports data organization and consistency across the project’s data ingestion and analysis workflows.</td>
-				</tr>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/notebooks/03_barber_telemetry_r1.ipynb'>03_barber_telemetry_r1.ipynb</a></b></td>
-					<td style='padding: 8px;'>- The <code>notebooks/03_barber_telemetry_r1.ipynb</code> file serves as an analytical exploration within the project, focusing on processing and visualizing telemetry data related to barber services<br>- Positioned within the broader codebase, this notebook likely functions as a data analysis and validation tool, providing insights into telemetry metrics that inform system performance, user engagement, or operational efficiency<br>- Its purpose is to facilitate understanding of telemetry patterns, supporting data-driven decision-making and system improvements across the overall architecture.</td>
-				</tr>
-			</table>
-		</blockquote>
-	</details>
-	<!-- tools Submodule -->
-	<details>
-		<summary><b>tools</b></summary>
-		<blockquote>
-			<div class='directory-path' style='padding: 8px 0; color: #666;'>
-				<code><b>⦿ tools</b></code>
-			<table style='width: 100%; border-collapse: collapse;'>
-			<thead>
-				<tr style='background-color: #f8f9fa;'>
-					<th style='width: 30%; text-align: left; padding: 8px;'>File Name</th>
-					<th style='text-align: left; padding: 8px;'>Summary</th>
-				</tr>
-			</thead>
-				<tr style='border-bottom: 1px solid #eee;'>
-					<td style='padding: 8px;'><b><a href='https://github.com/ngstephen1/DataScienceHackbyToyota/blob/master/tools/extract_barber_r1_vehicle.py'>extract_barber_r1_vehicle.py</a></b></td>
-					<td style='padding: 8px;'>- Extracts telemetry data specific to a designated vehicle from a large dataset, enabling focused analysis of that vehicles performance<br>- This script supports the broader data pipeline by isolating individual vehicle data, facilitating detailed investigations or model training on specific vehicle behavior within the overall telemetry data architecture.</td>
-				</tr>
-			</table>
-		</blockquote>
-	</details>
+  <summary><b><code>DATASCIENCEHACKBYTOYOTA/</code></b></summary>
+  <!-- __root__ Submodule -->
+  <details>
+    <summary><b>__root__</b></summary>
+    <blockquote>
+      <div class='directory-path' style='padding: 8px 0; color: #666;'>
+        <code><b>⦿ __root__</b></code>
+      <table style='width: 100%; border-collapse: collapse;'>
+      <thead>
+        <tr style='background-color: #f8f9fa;'>
+          <th style='width: 30%; text-align: left; padding: 8px;'>File Name</th>
+          <th style='text-align: left; padding: 8px;'>Summary</th>
+        </tr>
+      </thead>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>README.md</b></td>
+          <td style='padding: 8px;'>- Describes the overall Barber & VIR race-engineering platform, how to run the animation and Streamlit app, and where the TRD data and track maps come from.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>streamlit_app.py</b></td>
+          <td style='padding: 8px;'>- Main Streamlit UI: reads live state JSON, shows lap metrics, sliders, plots, and Gemini-generated race-engineer insights.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>requirements.txt</b></td>
+          <td style='padding: 8px;'>- Pin list of Python packages (`pandas`, `numpy`, `matplotlib`, `streamlit`, `google-generativeai`, etc.) required to run notebooks, scripts, and the dashboard.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>RUN.md</b></td>
+          <td style='padding: 8px;'>- Step-by-step runbook to set up the environment and launch the Barber race-engineer demo.</td>
+        </tr>
+      </table>
+    </blockquote>
+  </details>
+  <!-- src Submodule -->
+  <details>
+    <summary><b>src</b></summary>
+    <blockquote>
+      <div class='directory-path' style='padding: 8px 0; color: #666;'>
+        <code><b>⦿ src</b></code>
+      <table style='width: 100%; border-collapse: collapse;'>
+      <thead>
+        <tr style='background-color: #f8f9fa;'>
+          <th style='width: 30%; text-align: left; padding: 8px;'>File Name</th>
+          <th style='text-align: left; padding: 8px;'>Summary</th>
+        </tr>
+      </thead>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>pit_model.py</b></td>
+          <td style='padding: 8px;'>- Identifies pit laps, splits stints, and fits simple lap-time degradation models on top of GR Cup lap features.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>barber_digitize_track.py</b></td>
+          <td style='padding: 8px;'>- Interactive digitisation of the Barber track map: click around the circuit on the map image to build the centerline polyline and save as CSV.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>telemetry_loader.py</b></td>
+          <td style='padding: 8px;'>- Utilities to load and pre-process TRD telemetry CSVs into lap- and sector-level tables for further analysis.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>strategy_engine.py</b></td>
+          <td style='padding: 8px;'>- Core race strategy logic: simple pit lane loss, tyre deg, and caution modelling used by CLI and live tools to estimate ideal pit laps and compare strategies.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>track_utils.py</b></td>
+          <td style='padding: 8px;'>- Track-related helper functions (e.g., mapping distances to sectors) to support sector-level timing and plotting.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>test.py</b></td>
+          <td style='padding: 8px;'>- Small utility for plotting digitised track geometry and visually checking that the centerline looks correct.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>barber_lap_anim.py</b></td>
+          <td style='padding: 8px;'>- Barber race animation: draws the track map, moves a car icon along the path based on lap times, overlays a race-engineer info panel, and writes live JSON state for Streamlit + Gemini.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>live_state.py</b></td>
+          <td style='padding: 8px;'>- Simple JSON helper to read/write live state files in `data/live/`, used to sync the animation and Streamlit app.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>track_meta.py</b></td>
+          <td style='padding: 8px;'>- Metadata definitions for tracks (IDs, names, pit lane time assumptions, lengths) including Barber and VIR.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>barber_build_track_s.py</b></td>
+          <td style='padding: 8px;'>- Computes cumulative and normalised arc length along the digitised Barber centerline to support smooth animation and mapping.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>strategy_cli.py</b></td>
+          <td style='padding: 8px;'>- Command-line interface for running offline strategy simulations and printing recommended pit plans from processed lap features.</td>
+        </tr>
+      </table>
+    </blockquote>
+  </details>
+  <!-- notebooks Submodule -->
+  <details>
+    <summary><b>notebooks</b></summary>
+    <blockquote>
+      <div class='directory-path' style='padding: 8px 0; color: #666;'>
+        <code><b>⦿ notebooks</b></code>
+      <table style='width: 100%; border-collapse: collapse;'>
+      <thead>
+        <tr style='background-color: #f8f9fa;'>
+          <th style='width: 30%; text-align: left; padding: 8px;'>File Name</th>
+          <th style='text-align: left; padding: 8px;'>Summary</th>
+        </tr>
+      </thead>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>01_explore_vir.ipynb</b></td>
+          <td style='padding: 8px;'>- First pass on VIR data: exploring raw TRD files, basic distributions, and key variables for later sector and lap-time analysis.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>02_vir_sectors_r1r2.ipynb</b></td>
+          <td style='padding: 8px;'>- VIR sector-level analysis for Race 1 and Race 2, looking at sector times, consistency, and where pace is gained or lost.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>03_barber_telemetry_r1.ipynb</b></td>
+          <td style='padding: 8px;'>- Exploration of Barber Race 1 telemetry: cleaning, joining TRD files, and building the first lap-level and sector-level tables.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>04_barber_lap_times_r1.ipynb</b></td>
+          <td style='padding: 8px;'>- Barber R1 lap time analysis: lap distributions, degradation trends, driver pace profile, and first ideas for pit windows.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>05_barber_sections_r1.ipynb</b></td>
+          <td style='padding: 8px;'>- Race 1 sector breakdown at Barber: which sectors are most sensitive to tyre deg, and where the driver is strongest/weakest.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>06_barber_telemetry_r2.ipynb</b></td>
+          <td style='padding: 8px;'>- Barber R2 telemetry exploration, mirroring R1 but with a focus on validating patterns and preparing R2 lap features.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>07_barber_lap_times_r2.ipynb</b></td>
+          <td style='padding: 8px;'>- Barber R2 lap-time analysis, comparing Race 2 behaviour to Race 1 and checking consistency, deg, and pace trends.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>08_barber_sections_r2.ipynb</b></td>
+          <td style='padding: 8px;'>- Barber R2 sector analysis (S1/S2/S3): where performance improves or degrades vs R1 and what that means for tyres & setup.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>09_barber_driver_profile.ipynb</b></td>
+          <td style='padding: 8px;'>- Driver-profile notebook: consistency, risk profile, and typical mistakes across different stints and races at Barber.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>10_barber_strategy_mvp.ipynb</b></td>
+          <td style='padding: 8px;'>- MVP offline strategy model for Barber: simple degradation + pit lane loss model and basic “strategy multiverse” table used by `strategy_engine.py`.</td>
+        </tr>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>13_vir_telemetry_r1.ipynb</b></td>
+          <td style='padding: 8px;'>- VIR R1 telemetry ingestion and sanity checks: building VIR-specific sector stats and lap-level datasets for future extension of the tool. </td>
+        </tr>
+      </table>
+    </blockquote>
+  </details>
+  <!-- tools Submodule -->
+  <details>
+    <summary><b>tools</b></summary>
+    <blockquote>
+      <div class='directory-path' style='padding: 8px 0; color: #666;'>
+        <code><b>⦿ tools</b></code>
+      <table style='width: 100%; border-collapse: collapse;'>
+      <thead>
+        <tr style='background-color: #f8f9fa;'>
+          <th style='width: 30%; text-align: left; padding: 8px;'>File Name</th>
+          <th style='text-align: left; padding: 8px;'>Summary</th>
+        </tr>
+      </thead>
+        <tr style='border-bottom: 1px solid #eee;'>
+          <td style='padding: 8px;'><b>extract_barber_r1_vehicle.py</b></td>
+          <td style='padding: 8px;'>- Helper to slice out a single vehicle’s telemetry (e.g. GR86-002-000) from the massive Barber R1 telemetry CSV for downstream processing.</td>
+        </tr>
+      </table>
+    </blockquote>
+  </details>
 </details>
-
----
-
-## Getting Started
-
-### Prerequisites
-
-This project requires the following dependencies:
-
-- **Programming Language:** Python
-- **Package Manager:** Pip
-
-### Installation
-
-Build DataScienceHackbyToyota from the source and install dependencies:
-
-1. **Clone the repository:**
-
-    ```sh
-    ❯ git clone https://github.com/ngstephen1/DataScienceHackbyToyota
-    ```
-
-2. **Navigate to the project directory:**
-
-    ```sh
-    ❯ cd DataScienceHackbyToyota
-    ```
-
-3. **Install the dependencies:**
-
-**Using [pip](https://pypi.org/project/pip/):**
-
-```sh
-❯ pip install -r requirements.txt
-```
-
-### Usage
-
-Run the project with:
-
-**Using [pip](https://pypi.org/project/pip/):**
-
-```sh
-python {entrypoint}
-```
-
-### Testing
-
-Datasciencehackbytoyota uses the {__test_framework__} test framework. Run the test suite with:
-
-**Using [pip](https://pypi.org/project/pip/):**
-
-```sh
-pytest
-```
 
 ---
 
 ## Roadmap
 
-- [X] **`Task 1`**: <strike>Implement feature one.</strike>
-- [ ] **`Task 2`**: Implement feature two.
-- [ ] **`Task 3`**: Implement feature three.
+- [x] **`Task 1`**: Build Barber R2 strategy MVP and live race-engineer demo (animation + Streamlit + Gemini).
+- [ ] **`Task 2`**: Generalise live tooling to VIR and additional tracks from the TRD dataset.
+- [ ] **`Task 3`**: Add richer Monte Carlo strategy simulations and multi-car race scenarios into the Streamlit UI.
 
 ---
 
 ## Contributing
 
-- **💬 [Join the Discussions](https://github.com/ngstephen1/DataScienceHackbyToyota/discussions)**: Share your insights, provide feedback, or ask questions.
-- **🐛 [Report Issues](https://github.com/ngstephen1/DataScienceHackbyToyota/issues)**: Submit bugs found or log feature requests for the `DataScienceHackbyToyota` project.
-- **💡 [Submit Pull Requests](https://github.com/ngstephen1/DataScienceHackbyToyota/blob/main/CONTRIBUTING.md)**: Review open PRs, and submit your own PRs.
+- **💬 [Join the Discussions](https://github.com/ngstephen1/DataScienceHackbyToyota/discussions)** – Ideas, feedback, and questions.
+- **🐛 [Report Issues](https://github.com/ngstephen1/DataScienceHackbyToyota/issues)** – Bugs, edge cases, or feature requests.
+- **💡 Submit Pull Requests** – Improvements to strategy models, visualisations, or notebook analysis are very welcome.
 
 <details closed>
 <summary>Contributing Guidelines</summary>
 
-1. **Fork the Repository**: Start by forking the project repository to your github account.
-2. **Clone Locally**: Clone the forked repository to your local machine using a git client.
+1. **Fork the Repository**  
    ```sh
-   git clone https://github.com/ngstephen1/DataScienceHackbyToyota
+   git fork https://github.com/ngstephen1/DataScienceHackbyToyota
    ```
-3. **Create a New Branch**: Always work on a new branch, giving it a descriptive name.
+
+2. **Clone Locally**  
    ```sh
-   git checkout -b new-feature-x
+   git clone https://github.com/<your-username>/DataScienceHackbyToyota
+   cd DataScienceHackbyToyota
    ```
-4. **Make Your Changes**: Develop and test your changes locally.
-5. **Commit Your Changes**: Commit with a clear message describing your updates.
+
+3. **Create a New Branch**  
    ```sh
-   git commit -m 'Implemented new feature x.'
+   git checkout -b feature/my-improvement
    ```
-6. **Push to github**: Push the changes to your forked repository.
+
+4. **Make Your Changes** – and run the demo / manual tests.
+
+5. **Commit Your Changes**  
    ```sh
-   git push origin new-feature-x
+   git commit -m "Add <short description of change>"
    ```
-7. **Submit a Pull Request**: Create a PR against the original project repository. Clearly describe the changes and their motivations.
-8. **Review**: Once your PR is reviewed and approved, it will be merged into the main branch. Congratulations on your contribution!
+
+6. **Push to GitHub**  
+   ```sh
+   git push origin feature/my-improvement
+   ```
+
+7. **Open a Pull Request** – Describe what you changed and why.
+
 </details>
 
 <details closed>
 <summary>Contributor Graph</summary>
 <br>
 <p align="left">
-   <a href="https://github.com{/ngstephen1/DataScienceHackbyToyota/}graphs/contributors">
+   <a href="https://github.com/ngstephen1/DataScienceHackbyToyota/graphs/contributors">
       <img src="https://contrib.rocks/image?repo=ngstephen1/DataScienceHackbyToyota">
    </a>
 </p>
@@ -407,13 +539,16 @@ pytest
 
 ## License
 
-Datasciencehackbytoyota is protected under the [LICENSE](https://choosealicense.com/licenses) License. For more details, refer to the [LICENSE](https://choosealicense.com/licenses/) file.
+DataScienceHackbyToyota is released under the **MIT License**.  
+See the [`LICENSE`](LICENSE) file for details.
 
 ---
 
 ## Acknowledgments
 
-- Credit `contributors`, `inspiration`, `references`, etc.
+- **Toyota Racing Development (TRD)** for providing the GR86 GR Cup data and Barber circuit map.
+- **DataScienceHackbyToyota 2025 organisers** for framing the “real-time race engineer” challenge.
+- Open-source libraries: `numpy`, `pandas`, `matplotlib`, `streamlit`, `google-generativeai`, and others in `requirements.txt`.
 
 <div align="left"><a href="#top">⬆ Return</a></div>
 
