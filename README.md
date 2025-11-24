@@ -76,6 +76,7 @@ This project is designed to make massive, messy racing data usable in real time:
 
 ## Check it out:
 > https://devpost.com/software/racing-hokies
+> https://toyotadatasense.streamlit.app
 
 ---
 
