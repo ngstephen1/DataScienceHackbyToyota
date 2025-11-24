@@ -1,3 +1,11 @@
+"""
+Predictive models for lap-time estimation.
+
+This module trains and serves simple ML models (currently RandomForestRegressor)
+that map per-lap summary features (throttle, brake, sector times, etc.)
+to lap-time predictions.  Models are saved under models/ so they can be
+reused from notebooks, CLI tools, or the Streamlit app.
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -244,9 +252,47 @@ def load_lap_time_model(
     return model_bundle
 
 
+# --------------------------------------------------------------------------------------
+# Convenience helper
+# --------------------------------------------------------------------------------------
+
+def predict_lap_times_for(
+    track_id: str,
+    car_id: str,
+    laps: pd.DataFrame,
+    model_dir: Path | None = None,
+) -> pd.DataFrame:
+    """
+    Convenience helper: load the lap-time model for (track_id, car_id)
+    and apply it to a laps DataFrame.
+
+    This is mainly for use in Streamlit or small scripts where you just
+    want `laps` back with a ``lap_time_pred_s`` column.
+
+    Parameters
+    ----------
+    track_id : str
+        Track identifier, e.g. "barber".
+    car_id : str
+        Car identifier, e.g. "GR86-002-000".
+    laps : pd.DataFrame
+        Lap-features DataFrame containing the feature columns used at training time.
+    model_dir : Path or None
+        Optional override for the model directory.
+
+    Returns
+    -------
+    pd.DataFrame
+        A copy of `laps` with an added ``lap_time_pred_s`` column.
+    """
+    model_bundle = load_lap_time_model(track_id=track_id, car_id=car_id, model_dir=model_dir)
+    return predict_lap_times(laps, model_bundle)
+
+
 __all__ = [
     "train_lap_time_model",
     "predict_lap_times",
     "save_lap_time_model",
     "load_lap_time_model",
+    "predict_lap_times_for",
 ]

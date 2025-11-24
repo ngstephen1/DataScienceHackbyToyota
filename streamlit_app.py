@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from src.predictive_models import predict_lap_times_for
 from pathlib import Path
 import sys
 import time
