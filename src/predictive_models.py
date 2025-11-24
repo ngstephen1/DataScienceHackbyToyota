@@ -1,156 +1,252 @@
-# src/predictive_models.py
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Any, Tuple
+from typing import Dict, List, Tuple
+import json
 
-import joblib
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, r2_score
+import joblib
+
+# --------------------------------------------------------------------------------------
+# Paths
+# --------------------------------------------------------------------------------------
+
+ROOT = Path(__file__).resolve().parents[1]
+MODEL_DIR = ROOT / "models"
+MODEL_DIR.mkdir(exist_ok=True)
 
 
-THIS_FILE = Path(__file__).resolve()
-PROJECT_ROOT = THIS_FILE.parents[1]
-MODEL_DIR = PROJECT_ROOT / "data" / "models"
-MODEL_DIR.mkdir(parents=True, exist_ok=True)
+# --------------------------------------------------------------------------------------
+# Helpers
+# --------------------------------------------------------------------------------------
 
-# feature engineering, helpers
-
-def _prepare_features(laps: pd.DataFrame,
-                      target_col: str = "lap_time_s") -> Tuple[pd.DataFrame, pd.Series]:
+def _select_feature_cols(df: pd.DataFrame) -> List[str]:
     """
-    Select numeric features and target for lap-time prediction.
-    Assumes a processed lap_features CSV (like barber_r2_GR86-002-000_lap_features.csv).
+    Choose reasonable feature columns from a lap-features DataFrame.
+
+    Prefers throttle + brake + sector times if available, otherwise falls back
+    to a smaller subset, and finally to "anything except obvious non-feature columns".
     """
-
-    if target_col not in laps.columns:
-        raise KeyError(f"Target column '{target_col}' not found in laps columns: {list(laps.columns)}")
-
-    # Target
-    y = laps[target_col].astype(float)
-
-    # Start from numeric columns only
-    X = laps.select_dtypes(include=[np.number]).copy()
-
-    drop_cols = [
-        target_col,
-        "is_pit_lap",       
-        "lap_end_time_s",    
+    ranked_sets = [
+        ["aps_mean", "pbrake_f_mean", "pbrake_r_mean",
+         "sector1_time_s", "sector2_time_s", "sector3_time_s"],
+        ["aps_mean", "pbrake_f_mean",
+         "sector1_time_s", "sector2_time_s", "sector3_time_s"],
+        ["aps_mean", "pbrake_f_mean"],
     ]
-    for col in drop_cols:
-        if col in X.columns:
-            X = X.drop(columns=[col])
 
-    # If stint_lap is missing but lap_no exists, we can fall back to it
-    if "stint_lap" not in X.columns and "lap_no" in X.columns:
-        X["stint_lap"] = laps["lap_no"].astype(float)
+    for cand in ranked_sets:
+        cols = [c for c in cand if c in df.columns]
+        if len(cols) >= 2:
+            return cols
 
-    if X.empty:
-        raise ValueError("No numeric features left after filtering – check your lap_features CSV.")
-
-    return X, y
+    # Fallback: anything that is not clearly an ID / target column
+    drop = {"lap", "lap_no", "lap_time_s", "race_id", "is_race_pace_lap"}
+    return [c for c in df.columns if c not in drop]
 
 
-#  training 
+def _model_filename(track_id: str, car_id: str) -> str:
+    safe_track = track_id.replace("/", "_")
+    safe_car = car_id.replace("/", "_")
+    return f"lap_time_{safe_track}_{safe_car}.joblib"
+
+
+# --------------------------------------------------------------------------------------
+# Core training API
+# --------------------------------------------------------------------------------------
 
 def train_lap_time_model(
     laps: pd.DataFrame,
-    *,
-    track_id: str = "barber",
-    car_id: str = "GR86-002-000",
+    track_id: str = "unknown",
+    car_id: str = "unknown",
     random_state: int = 42,
-) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+) -> Tuple[Dict, Dict]:
     """
-    Train a RandomForestRegressor to predict lap_time_s from lap features.
+    Train a simple RandomForest lap-time model.
 
-    Returns:
-        model_bundle: dict with estimator + feature names + metadata
-        metrics: dict with basic validation metrics
+    Parameters
+    ----------
+    laps : pd.DataFrame
+        Must contain at least:
+          - 'lap_time_s' (float, target)
+          - some of: 'aps_mean', 'pbrake_f_mean', 'pbrake_r_mean',
+                     'sector1_time_s', 'sector2_time_s', 'sector3_time_s'
+    track_id : str
+        e.g. 'barber'
+    car_id : str
+        e.g. 'GR86-002-000'
+    random_state : int
+        For reproducibility.
+
+    Returns
+    -------
+    model_bundle : dict
+        {
+          "model": fitted RandomForestRegressor,
+          "feature_names": [...],
+          "track_id": ...,
+          "car_id": ...,
+          "metrics": {...}
+        }
+    metrics : dict
+        Basic validation metrics.
     """
+    df = laps.copy().reset_index(drop=True)
 
-    # Only use non-pit laps for modelling
-    if "is_pit_lap" in laps.columns:
-        laps = laps[~laps["is_pit_lap"]].copy()
+    if "lap_time_s" not in df.columns:
+        raise ValueError("laps DataFrame must contain 'lap_time_s' column.")
 
-    X, y = _prepare_features(laps, target_col="lap_time_s")
+    # Drop rows with NaN target
+    df = df[np.isfinite(df["lap_time_s"])]
 
+    if len(df) < 6:
+        raise ValueError(f"Need at least 6 laps to train a model, got {len(df)}")
+
+    feature_cols = _select_feature_cols(df)
+    if len(feature_cols) == 0:
+        raise ValueError("Could not find any usable feature columns.")
+
+    X = df[feature_cols].astype(float).to_numpy()
+    y = df["lap_time_s"].astype(float).to_numpy()
+
+    # Simple train/val split
+    test_size = max(2, len(df) // 4)  # at least 2 laps in val
     X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=0.2, random_state=random_state
+        X, y, test_size=test_size, random_state=random_state
     )
 
     rf = RandomForestRegressor(
         n_estimators=200,
-        max_depth=None,
-        n_jobs=-1,
+        max_depth=6,
+        min_samples_leaf=2,
         random_state=random_state,
     )
-
     rf.fit(X_train, y_train)
 
     y_pred = rf.predict(X_val)
-    rmse = float(mean_squared_error(y_val, y_pred, squared=False))
+    mse = mean_squared_error(y_val, y_pred)
+    rmse = float(np.sqrt(mse))              # compatible with older sklearn
     r2 = float(r2_score(y_val, y_pred))
 
-    metrics = {
+    metrics: Dict = {
         "track_id": track_id,
         "car_id": car_id,
-        "n_laps": int(len(laps)),
-        "n_features": int(X.shape[1]),
-        "rmse_val_s": rmse,
+        "rmse_val": rmse,
         "r2_val": r2,
+        "n_train": int(len(y_train)),
+        "n_val": int(len(y_val)),
+        "features": feature_cols,
     }
 
-    model_bundle: Dict[str, Any] = {
-        "estimator": rf,
-        "feature_names": list(X.columns),
+    model_bundle: Dict = {
+        "model": rf,
+        "feature_names": feature_cols,
         "track_id": track_id,
         "car_id": car_id,
+        "metrics": metrics,
     }
-
-    print(f"[lap-time model] {track_id} / {car_id}")
-    print(f"  laps: {metrics['n_laps']}, features: {metrics['n_features']}")
-    print(f"  val RMSE: {rmse:.3f} s, R²: {r2:.3f}")
 
     return model_bundle, metrics
 
 
-def _default_model_path(track_id: str, car_id: str) -> Path:
-    fname = f"lap_time_model_{track_id}_{car_id}.joblib"
-    return MODEL_DIR / fname
+# --------------------------------------------------------------------------------------
+# Prediction + IO helpers
+# --------------------------------------------------------------------------------------
+
+def predict_lap_times(laps: pd.DataFrame, model_bundle: Dict) -> pd.DataFrame:
+    """
+    Add a 'lap_time_pred_s' column to a laps DataFrame using a trained model_bundle.
+
+    Parameters
+    ----------
+    laps : pd.DataFrame
+        Must contain the feature columns used at training time.
+    model_bundle : dict
+        As returned by train_lap_time_model().
+
+    Returns
+    -------
+    pd.DataFrame
+        Copy of laps with an extra 'lap_time_pred_s' column.
+    """
+    if model_bundle is None:
+        raise ValueError("model_bundle is None – train or load a model first.")
+
+    feature_cols: List[str] = model_bundle.get("feature_names", [])
+    if not feature_cols:
+        raise ValueError("model_bundle is missing 'feature_names'.")
+
+    missing = [c for c in feature_cols if c not in laps.columns]
+    if missing:
+        raise ValueError(
+            f"Input laps DataFrame is missing feature columns: {missing}"
+        )
+
+    X = laps[feature_cols].astype(float).to_numpy()
+    preds = model_bundle["model"].predict(X)
+
+    out = laps.copy()
+    out["lap_time_pred_s"] = preds
+    return out
 
 
 def save_lap_time_model(
-    model_bundle: Dict[str, Any],
-    *,
-    track_id: str = "barber",
-    car_id: str = "GR86-002-000",
-    path: Path | None = None,
+    model_bundle: Dict,
+    model_dir: Path | None = None,
 ) -> Path:
     """
-    Save the trained model bundle to data/models/.
-    """
-    if path is None:
-        path = _default_model_path(track_id, car_id)
+    Persist a model_bundle to disk as a .joblib file and a small JSON sidecar.
 
-    joblib.dump(model_bundle, path)
-    print(f"[lap-time model] Saved to: {path}")
-    return path
+    Returns
+    -------
+    Path
+        Path to the saved .joblib file.
+    """
+    if model_dir is None:
+        model_dir = MODEL_DIR
+    model_dir.mkdir(exist_ok=True)
+
+    track_id = model_bundle.get("track_id", "unknown")
+    car_id = model_bundle.get("car_id", "unknown")
+
+    model_path = model_dir / _model_filename(track_id, car_id)
+    joblib.dump(model_bundle, model_path)
+
+    # Optional: write metrics as JSON next to the model
+    metrics = model_bundle.get("metrics", {})
+    meta_path = model_path.with_suffix(".json")
+    with meta_path.open("w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=2)
+
+    return model_path
 
 
 def load_lap_time_model(
-    *,
-    track_id: str = "barber",
-    car_id: str = "GR86-002-000",
-    path: Path | None = None,
-) -> Dict[str, Any]:
+    track_id: str,
+    car_id: str,
+    model_dir: Path | None = None,
+) -> Dict:
     """
-    Load a previously saved lap-time model bundle.
+    Load a previously saved model_bundle from disk.
     """
-    if path is None:
-        path = _default_model_path(track_id, car_id)
+    if model_dir is None:
+        model_dir = MODEL_DIR
 
-    bundle = joblib.load(path)
-    return bundle
+    model_path = model_dir / _model_filename(track_id, car_id)
+    if not model_path.exists():
+        raise FileNotFoundError(f"No model file found at {model_path}")
+
+    model_bundle: Dict = joblib.load(model_path)
+    return model_bundle
+
+
+__all__ = [
+    "train_lap_time_model",
+    "predict_lap_times",
+    "save_lap_time_model",
+    "load_lap_time_model",
+]

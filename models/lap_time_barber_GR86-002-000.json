@@ -1,0 +1,12 @@
+{
+  "track_id": "barber",
+  "car_id": "GR86-002-000",
+  "rmse_val": 18.576000458027135,
+  "r2_val": -0.1643245131101967,
+  "n_train": 21,
+  "n_val": 7,
+  "features": [
+    "aps_mean",
+    "pbrake_f_mean"
+  ]
+}
