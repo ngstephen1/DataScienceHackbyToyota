@@ -5,3 +5,5 @@ streamlit
 jupyter
 ipykernel
 google-generativeai
+joblib
+scikit-learn

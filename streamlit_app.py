@@ -1,5 +1,7 @@
 from __future__ import annotations
+from src.decision_reviewer import review_decision
 from src.predictive_models import predict_lap_times_for
+from src.chat_assistant import build_chat_context, answer_engineer
 from pathlib import Path
 import sys
 import time
@@ -246,6 +248,9 @@ else:
 if "live_insights" not in st.session_state:
     st.session_state["live_insights"] = []
 
+if "chat_history" not in st.session_state:
+    st.session_state["chat_history"] = []
+
 st.title("🏁 Racing Hokies – GR RaceCraft Copilot (Barber MVP)")
 
 st.markdown(
@@ -260,6 +265,7 @@ For this MVP we focus on **Barber Motorsports Park, Race 2, Car #2** and:
 - Run a small **“mini multiverse”** (Monte Carlo) of random cautions  
 - Provide a basic **Driver Insights** view for lap-time and consistency analysis  
 - Stream a **live engineering feed** powered by heuristics + Gemini  
+- Offer a **Strategy Chat** where you can ask the copilot questions in natural language  
 """
 )
 
@@ -341,11 +347,13 @@ else:
     caution_lap = None
     caution_len = 0
 
-tab_strategy, tab_driver, tab_live = st.tabs(
+tab_strategy, tab_driver, tab_predict, tab_chat, tab_live = st.tabs(
     [
         "🧠 Strategy Brain",
         "📊 Driver Insights",
-        "📡 Live Race Copilot",
+        "📈 Predictive Models",
+        "💬 Strategy Chat",
+        "🎙 Live Race Copilot",
     ]
 )
 
@@ -481,6 +489,47 @@ with tab_driver:
         st.caption(
             "Line chart: lap time vs lap number. Dips = good laps, spikes often = traffic, caution, or mistakes."
         )
+
+        # ---------- Predictive lap-time overlay (Random Forest model) ----------
+        # Only wired for Barber right now, where the model was trained.
+        if track_id == "barber-motorsports-park":
+            try:
+                # In predictive_models we trained with short track_id "barber"
+                pred_df = predict_lap_times_for(track_id="barber", race=race, car_id=car_id)
+                if "lap" in pred_df.columns and "lap_time_pred_s" in pred_df.columns:
+                    merged = (
+                        display_df.merge(
+                            pred_df[["lap", "lap_time_pred_s"]],
+                            on="lap",
+                            how="left",
+                        )
+                        .set_index("lap")
+                    )
+
+                    st.markdown("### Predictive lap-time model overlay")
+                    st.line_chart(
+                        merged[["lap_time_s", "lap_time_pred_s"]],
+                        height=260,
+                    )
+                    st.caption(
+                        "Overlay: actual lap times vs Random Forest model prediction using throttle + brake features."
+                    )
+                else:
+                    st.caption(
+                        "Predictive model output does not contain expected columns; "
+                        "check `predictive_models.py` implementation."
+                    )
+            except FileNotFoundError:
+                st.caption(
+                    "No trained lap-time model found yet for this car/track. "
+                    "Train it in the notebook and save under `models/`."
+                )
+            except Exception as e:
+                st.caption(f"Predictive model unavailable in this session: {e}")
+        else:
+            st.caption(
+                "Predictive lap-time overlay currently enabled only for Barber where a model has been trained."
+            )
     else:
         st.info("Lap-time profile unavailable (no per-lap telemetry for this track).")
 
@@ -626,6 +675,129 @@ with tab_driver:
             "section notebooks and save as "
             "`data/processed/barber/barber_<race>_sector_stats_all_cars.csv`."
         )
+
+# ---------- Predictive Models ----------
+with tab_predict:
+    st.subheader("Predictive Models – Lap Time Forecast")
+    st.markdown(
+        "We use a Random Forest trained on per-lap features "
+        "(`aps_mean`, `pbrake_f_mean`, …) to predict lap times."
+    )
+
+    laps_path = DATA_PROCESSED / "barber" / "barber_r2_GR86-002-000_lap_features.csv"
+    if not laps_path.exists():
+        st.warning(f"Lap-features file not found at `{laps_path}`.")
+    else:
+        laps_df = pd.read_csv(laps_path)
+        st.caption("Sample of lap features used as model inputs:")
+        st.dataframe(laps_df.head())
+
+        try:
+            laps_pred = predict_lap_times_for(
+                track_id="barber",
+                car_id="GR86-002-000",
+                laps=laps_df,
+            )
+            st.caption("Predicted vs actual lap times:")
+            st.dataframe(
+                laps_pred[["lap", "lap_time_s", "lap_time_pred_s"]].head()
+            )
+
+            # quick plot
+            fig, ax = plt.subplots()
+            ax.plot(laps_pred["lap"], laps_pred["lap_time_s"], "o-", label="Actual")
+            ax.plot(
+                laps_pred["lap"],
+                laps_pred["lap_time_pred_s"],
+                "s--",
+                label="Predicted",
+            )
+            ax.set_xlabel("Lap")
+            ax.set_ylabel("Lap time (s)")
+            ax.set_title("Actual vs predicted lap times")
+            ax.legend()
+            st.pyplot(fig)
+
+        except FileNotFoundError:
+            st.warning(
+                "No trained model found yet. "
+                "Train and save a model in the `11_barber_predictive_model.ipynb` notebook first."
+            )
+        except Exception as e:
+            st.error(f"Problem running predictions: {e}")
+
+# ---------- Strategy Chat ----------
+with tab_chat:
+    st.subheader("💬 Strategy Chat – talk to the RaceCraft Copilot")
+
+    if GEMINI_MODEL is None:
+        st.info(
+            "Gemini is not configured. Set `GEMINI_API_KEY` in your environment "
+            "to enable the chat assistant."
+        )
+    elif lap_df is None or not strategy_available:
+        st.info(
+            "Strategy Chat is currently wired only for tracks with per-lap telemetry "
+            "(Barber). Enable once lap_features are available."
+        )
+    else:
+        # Build a static context once per session
+        context = build_chat_context(
+            lap_df=lap_df,
+            track_meta=meta,
+            cfg=cfg,
+            strategies=strategies,
+            race=race,
+            car_id=car_id,
+        )
+
+        st.markdown(
+            "Ask anything like:  \n"
+            "- *“If we box this lap, do we undercut the car ahead?”*  \n"
+            "- *“How risky is it to stay out if a caution comes in the next 3 laps?”*  \n"
+            "- *“Which stint looks weakest so far and why?”*"
+        )
+
+        user_q = st.text_area(
+            "Your question to the engineer copilot:",
+            height=100,
+            placeholder="Example: If we stay out 5 more laps on this stint, how much time do we likely lose?",
+        )
+        ask_button = st.button("Ask the copilot")
+
+        if ask_button and user_q.strip():
+            with st.spinner("Thinking like a race engineer..."):
+                # Optional: bring in latest live state if running the Live tab in parallel
+                live_state = None
+                live_state_path = get_live_state_path("barber")
+                if live_state_path.exists():
+                    try:
+                        live_state = json.loads(live_state_path.read_text(encoding="utf-8"))
+                    except Exception:
+                        live_state = None
+
+                answer = answer_engineer(
+                    model=GEMINI_MODEL,
+                    question=user_q,
+                    context=context,
+                    live_state=live_state,
+                )
+
+                st.session_state["chat_history"].append(
+                    {"role": "user", "content": user_q}
+                )
+                st.session_state["chat_history"].append(
+                    {"role": "assistant", "content": answer}
+                )
+
+        # Render chat history (latest at bottom)
+        if st.session_state["chat_history"]:
+            st.markdown("#### Conversation")
+            for msg in st.session_state["chat_history"]:
+                if msg["role"] == "user":
+                    st.markdown(f"**You:** {msg['content']}")
+                else:
+                    st.markdown(f"**Engineer Copilot:** {msg['content']}")
 
 # ---------- Live Race Copilot ----------
 with tab_live:
@@ -776,6 +948,8 @@ with tab_live:
                             st.markdown(f"- **Lap {msg['lap']}:** {msg['text']}")
 
                     time.sleep(tick_delay)
+
+
 
 st.markdown("---")
 st.caption(

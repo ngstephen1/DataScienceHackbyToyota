@@ -1,23 +1,23 @@
 {
   "track_id": "barber-motorsports-park",
-  "race": "R1",
+  "race": "R2",
   "car_id": "GR86-002-000",
-  "lap": 10,
-  "max_lap": 29,
-  "x_norm": 0.5331623690319341,
-  "y_norm": 0.514003996003996,
+  "lap": 20,
+  "max_lap": 28,
+  "x_norm": 0.4831623690319342,
+  "y_norm": 0.2782597402597403,
   "tyre_flag": "🔴 Heavy deg",
-  "last5_delta_vs_best_s": 72.2544,
-  "push_factor": 1.5,
-  "risk_pref": 0.1,
-  "subjective_caution_prob_pct": 35,
+  "last5_delta_vs_best_s": 49.10079999999999,
+  "push_factor": 1.0,
+  "risk_pref": 0.4,
+  "subjective_caution_prob_pct": 20,
   "pit_laps": [
     10
   ],
-  "caution_lap": 23,
-  "caution_len": 4,
-  "gemini_insight": "Okay, team, listen up.\n\n*   **Tyre & Pace:**\n    *   Pace is stable, slightly quicker than median, but still pushing hard at 1.5 factor.\n    *   Massive 72-second delta to best lap, indicates current performance limit.\n\n*   **Pit Window:**\n    *   Hold current pit plan; come in this lap 10.\n    *   \"1-stop_early\" strategy aligns perfectly with current lap.\n\n*   **Caution:**\n    *   No immediate caution expected within next 3 laps; next known is lap 23.\n    *   Focus on clean out-lap and managing fresh tire temps.",
-  "timestamp": 1763963712.860948,
+  "caution_lap": 10,
+  "caution_len": 2,
+  "gemini_insight": "Here's the read:\n\n*   Pace is solid on 10-lap old tires, showing slight improvement. Tyre degradation is well managed.\n*   Pit stop complete; strategy executed on Lap 10. No further pit window to consider.\n*   A late caution means a sprint to the finish. Focus on track position for the inevitable restart.",
+  "timestamp": 1764024998.2233012,
   "session_id": "barber",
-  "saved_at": 1763963712.860954
+  "saved_at": 1764024998.223315
 }

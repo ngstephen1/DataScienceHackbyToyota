@@ -3,7 +3,7 @@ Predictive models for lap-time estimation.
 
 This module trains and serves simple ML models (currently RandomForestRegressor)
 that map per-lap summary features (throttle, brake, sector times, etc.)
-to lap-time predictions.  Models are saved under models/ so they can be
+to lap-time predictions. Models are saved under models/ so they can be
 reused from notebooks, CLI tools, or the Streamlit app.
 """
 from __future__ import annotations
@@ -137,7 +137,7 @@ def train_lap_time_model(
 
     y_pred = rf.predict(X_val)
     mse = mean_squared_error(y_val, y_pred)
-    rmse = float(np.sqrt(mse))              # compatible with older sklearn
+    rmse = float(np.sqrt(mse))  # compatible with older sklearn
     r2 = float(r2_score(y_val, y_pred))
 
     metrics: Dict = {
@@ -285,7 +285,11 @@ def predict_lap_times_for(
     pd.DataFrame
         A copy of `laps` with an added ``lap_time_pred_s`` column.
     """
-    model_bundle = load_lap_time_model(track_id=track_id, car_id=car_id, model_dir=model_dir)
+    model_bundle = load_lap_time_model(
+        track_id=track_id,
+        car_id=car_id,
+        model_dir=model_dir,
+    )
     return predict_lap_times(laps, model_bundle)
 
 
