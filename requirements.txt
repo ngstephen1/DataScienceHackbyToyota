@@ -4,3 +4,4 @@ matplotlib
 streamlit
 jupyter
 ipykernel
+google-generativeai
