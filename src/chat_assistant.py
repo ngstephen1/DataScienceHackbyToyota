@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 """
-1:06am 11/25
 
 Conversational race-engineer assistant for the Streamlit app.
 
