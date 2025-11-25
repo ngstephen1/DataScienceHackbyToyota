@@ -2,6 +2,7 @@ from __future__ import annotations
 from src.decision_reviewer import review_decision
 from src.predictive_models import predict_lap_times_for
 from src.chat_assistant import build_chat_context, answer_engineer
+from src.vision_gemini import analyze_race_image
 from pathlib import Path
 import sys
 import time
@@ -22,6 +23,9 @@ if str(SRC) not in sys.path:
 DATA_ROOT = ROOT / "data"
 DATA_PROCESSED = DATA_ROOT / "processed"
 TRACK_GEOM_DIR = DATA_ROOT / "track_geom"
+VISION_DIR = DATA_ROOT / "vision"
+VISION_DIR.mkdir(parents=True, exist_ok=True)
+SAMPLE_VISION_IMG = VISION_DIR / "sample_gr86_barber.png"
 
 # ---------- Local live-state writer (shared with Tk car-map viewer) ----------
 LIVE_DIR = DATA_ROOT / "live"
@@ -192,7 +196,7 @@ Use concise race-radio language (no fluff). If the situation is normal, say so b
 
 
 # ---------- Data loading ----------
-def load_lap_features(track_id: str, race: str, car_id: str) -> pd.DataFrame:
+def load_lap_features(track_id: str, race: str, car: str) -> pd.DataFrame:
     track_dirs = {
         "barber-motorsports-park": "barber",
         "virginia-international-raceway": "virginia",
@@ -205,12 +209,12 @@ def load_lap_features(track_id: str, race: str, car_id: str) -> pd.DataFrame:
     short = track_dirs[track_id]
     race_lower = race.lower()
     proc_dir = DATA_PROCESSED / short
-    fname = f"{short}_{race_lower}_{car_id}_lap_features.csv"
+    fname = f"{short}_{race_lower}_{car}_lap_features.csv"
     path = proc_dir / fname
 
     if not path.exists():
         raise FileNotFoundError(
-            f"Lap feature file not found for {track_id}, {race}, {car_id}: {path}"
+            f"Lap feature file not found for {track_id}, {race}, {car}: {path}"
         )
 
     return pd.read_csv(path)
@@ -266,6 +270,7 @@ For this MVP we focus on **Barber Motorsports Park, Race 2, Car #2** and:
 - Provide a basic **Driver Insights** view for lap-time and consistency analysis  
 - Stream a **live engineering feed** powered by heuristics + Gemini  
 - Offer a **Strategy Chat** where you can ask the copilot questions in natural language  
+- Add a **Computer Vision** view, where Gemini 2.5 reads race frames and estimates line / risk  
 """
 )
 
@@ -347,11 +352,12 @@ else:
     caution_lap = None
     caution_len = 0
 
-tab_strategy, tab_driver, tab_predict, tab_chat, tab_live = st.tabs(
+tab_strategy, tab_driver, tab_predict, tab_vision, tab_chat, tab_live = st.tabs(
     [
         "🧠 Strategy Brain",
         "📊 Driver Insights",
         "📈 Predictive Models",
+        "👁️ Vision",
         "💬 Strategy Chat",
         "🎙 Live Race Copilot",
     ]
@@ -725,6 +731,97 @@ with tab_predict:
             )
         except Exception as e:
             st.error(f"Problem running predictions: {e}")
+
+# ---------- Vision (Gemini 2.5 CV) ----------
+with tab_vision:
+    st.subheader("👁️ Computer Vision – race frame analysis")
+
+    if GEMINI_MODEL is None:
+        st.info(
+            "Gemini is not configured. Set `GEMINI_API_KEY` in your environment "
+            "to enable the vision assistant."
+        )
+    else:
+        uploaded = st.file_uploader(
+            "Upload a race frame (PNG/JPG). If you skip this, we'll use the sample GR86 image.",
+            type=["png", "jpg", "jpeg"],
+        )
+
+        img_path: Path | None = None
+
+        if uploaded is not None:
+            # Save uploaded file into data/vision
+            dest = VISION_DIR / uploaded.name
+            with dest.open("wb") as f:
+                f.write(uploaded.getbuffer())
+            img_path = dest
+        elif SAMPLE_VISION_IMG.exists():
+            st.caption("No image uploaded – using sample frame `sample_gr86_barber.png`.")
+            img_path = SAMPLE_VISION_IMG
+
+        if img_path is None:
+            st.info("Upload a race frame or add `sample_gr86_barber.png` to `data/vision/`.")
+        else:
+            st.image(str(img_path), caption=f"Frame: {img_path.name}", use_column_width=True)
+
+            with st.spinner("Letting Gemini 2.5 read the frame…"):
+                try:
+                    stats = analyze_race_image(GEMINI_MODEL, img_path)
+                except Exception as e:
+                    st.error(f"Vision analysis failed: {e}")
+                    stats = None
+
+            if stats is not None:
+                st.markdown("#### Structured view (for engineers / ML):")
+                st.json(
+                    {
+                        "car_detected": stats.car_detected,
+                        "num_cars": stats.num_cars,
+                        "car_color": stats.car_color,
+                        "track_curvature_deg": stats.track_curvature_deg,
+                        "lane_position_norm": stats.lane_position_norm,
+                        "distance_to_inside_m": stats.distance_to_inside_m,
+                        "distance_to_outside_m": stats.distance_to_outside_m,
+                        "est_speed_kmh": stats.est_speed_kmh,
+                        "visibility_score": stats.visibility_score,
+                        "risk_score": stats.risk_score,
+                    }
+                )
+
+                st.markdown("#### Quick engineering summary")
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Cars in frame", stats.num_cars)
+                if stats.est_speed_kmh is not None:
+                    col2.metric("Estimated speed", f"{stats.est_speed_kmh:.0f} km/h")
+                else:
+                    col2.metric("Estimated speed", "–")
+
+                if stats.risk_score is not None:
+                    col3.metric("Off-track risk", f"{stats.risk_score:.2f} (0–1)")
+                else:
+                    col3.metric("Off-track risk", "–")
+
+                # Simple plot turning Gemini numbers into visuals
+                st.markdown("#### Line & risk visualisation from Gemini outputs")
+                fig, axes = plt.subplots(1, 2, figsize=(8, 3))
+
+                # Lane position
+                ax1 = axes[0]
+                ax1.barh(["lane"], [stats.lane_position_norm])
+                ax1.set_xlim(-1, 1)
+                ax1.axvline(0, linestyle="--", linewidth=1)
+                ax1.set_xlabel("Inside  ←  lane position  →  Outside")
+                ax1.set_title("Lane position (−1 inside, +1 outside)")
+
+                # Risk score
+                ax2 = axes[1]
+                ax2.bar(["risk"], [stats.risk_score])
+                ax2.set_ylim(0, 1)
+                ax2.set_ylabel("Risk (0–1)")
+                ax2.set_title("Gemini off-track risk estimate")
+
+                fig.tight_layout()
+                st.pyplot(fig)
 
 # ---------- Strategy Chat ----------
 with tab_chat:
