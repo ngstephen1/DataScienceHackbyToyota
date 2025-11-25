@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 import json
 import textwrap
 
@@ -12,7 +12,7 @@ def _summarise_driver_pace(lap_df: pd.DataFrame) -> str:
     """Build a short text summary of driver pace from lap_df."""
     df = lap_df.copy()
 
-    # Drop pit laps if we have the flag
+    # damn beautiful race
     if "is_pit_lap" in df.columns:
         df = df[~df["is_pit_lap"]]
 
@@ -112,35 +112,183 @@ def _format_live_state_for_prompt(live_state: Optional[Dict[str, Any]]) -> str:
         return "Live state provided but could not be serialised cleanly."
 
 
+def _is_greeting(question: str) -> bool:
+    greetings = [
+        "hi", "hi there", "hello", "hey", "hey there", "yo",
+        "good morning", "good afternoon", "good evening"
+    ]
+    q = question.strip().lower()
+    if q in greetings or q in ["how are you", "how are you?"]:
+        return True
+    for greet in greetings:
+        if q.startswith(greet + " "):
+            return True
+    return False
+
+
+def _looks_race_related(question: str) -> bool:
+    q = question.lower()
+    keywords = [
+        "lap", "pit", "pits", "box", "tyre", "tire", "safety car",
+        "yellow flag", "caution", "strategy", "stint", "race", "barber",
+        "vir", "gr86", "gap", "sector"
+    ]
+    return any(kw in q for kw in keywords)
+
+
+def _classify_question(question: str) -> Literal["race_core", "tool_help", "smalltalk", "offtopic"]:
+    q = question.strip().lower()
+    if _is_greeting(q):
+        return "smalltalk"
+    if _looks_race_related(q):
+        return "race_core"
+    tool_keywords = [
+        "streamlit", "app", "dashboard", "tool", "button", "tab",
+        "predictive model", "decision reviewer", "chatbot", "vision", "computer vision"
+    ]
+    if any(kw in q for kw in tool_keywords):
+        return "tool_help"
+    return "offtopic"
+
+
+def _summarise_scope() -> str:
+    return (
+        "I’m your GT race engineer assistant. I can:\n"
+        "- Explain laps, stints, tyre phases, and gaps\n"
+        "- Compare pit timing options\n"
+        "- Reason about cautions / safety car risk\n"
+        "- Interpret predictive models used in this app\n"
+        "- Review race-engineer decisions and strategy options\n"
+        "- Explain how to use the app tabs:\n"
+        "  * Strategy Brain\n"
+        "  * Driver Insights\n"
+        "  * Predictive Models\n"
+        "  * Strategy Chat\n"
+        "  * Live Race Copilot\n"
+        "  * Vision (including computer vision features)\n"
+        "- Handle light smalltalk but I’m specialized for racing and strategy."
+    )
+
+
 def answer_engineer(
     model: Optional[genai.GenerativeModel],
     question: str,
     context: str,
     live_state: Optional[Dict[str, Any]] = None,
+    chat_history: Optional[List[Dict[str, str]]] = None,
 ) -> str:
     """
     Use Gemini to answer a race-engineering question, given static context and
-    optional current live_state.
+    optional current live_state and chat_history.
 
-    Returns a short, radio-style explanation.
+    Parameters
+HIHIHIHIHII
+    model:
+        The Gemini generative model instance or None if unavailable.
+    question:
+        The engineer's question as a string.
+    context:
+        Static race context text.
+    live_state:
+        Optional current live state snapshot dict.
+    chat_history:
+        Optional list of dicts with keys 'role' and 'content', representing recent conversation turns.
+        Can be used to keep the conversation grounded and support multi-turn dialogue.
+
+    Returns a short, radio-style explanation or a friendly response.
     """
-    if model is None:
-        # Fallback if Gemini is not configured
-        return (
-            "Gemini is not configured in this environment, so I can only answer in a generic way.\n\n"
-            f"Context summary:\n{context}\n\n"
-            f"Question: {question}\n\n"
-            "As a rule of thumb, compare expected time gain/loss from the pit stop against "
-            "tyre degradation over the remaining laps and the risk of a safety car. "
-            "If tyres are stable and there is low safety-car risk, staying out is usually safer; "
-            "if degradation is high or an undercut is available, boxing sooner can pay off."
+    mode = _classify_question(question)
+
+    if mode == "smalltalk":
+        greeting = (
+            "Hey! 👋 I’m your race engineer assistant.\n\n"
+            + _summarise_scope()
+            + "\n\nAsk me anything about your race, strategy, or telemetry."
         )
+        # Return greeting without callng model regardless of availability
+        return greeting
+
+    if model is None:
+        if mode == "race_core":
+            return (
+                "Gemini is not configured in this environment.\n\n"
+                + _summarise_scope()
+                + "\n\nWhile I can't access live data, here are some general race strategy principles:\n"
+                "- Consider your current stint and tyre condition.\n"
+                "- Compare expected pit stop time loss against tyre degradation.\n"
+                "- Factor in safety car risk and track position.\n"
+                "- Use your data and telemetry to refine decisions."
+            )
+        elif mode == "tool_help":
+            return (
+                "This app provides several tools to support race engineering:\n"
+                "- Strategy Brain: analyse and compare pit strategies.\n"
+                "- Driver Insights: telemetry and pace analysis.\n"
+                "- Predictive Models: forecasts and risk assessments.\n"
+                "- Strategy Chat: interactive assistant for race questions.\n"
+                "- Decision Reviewer: review and evaluate past decisions.\n"
+                "- Vision: computer vision features for track and car analysis.\n\n"
+                "Currently, AI features are offline, so I cannot provide interactive answers."
+            )
+        else:  # offtopic
+            return (
+                "That question is outside the scope of my race engineer assistant role.\n\n"
+                + _summarise_scope()
+            )
+
+    # model is not None path
+
+    # Summarise recent chat history if provided
+    if chat_history and len(chat_history) > 0:
+        # Take up to last 3 user/assistant pairs (6 messages)
+        # We' ll group by pairs: user then assistant
+        # chat_history assumed to be list of dicts with 'rolee' and 'content
+        # roles expected: 'user' and 'assistant'
+        pairs = []
+        temp_pair = {}
+        count_pairs = 0
+        for turn in reversed(chat_history):
+            role = turn.get("role", "")
+            content = turn.get("content", "")
+            if role == "assistant":
+                temp_pair["assistant"] = content
+            elif role == "user":
+                temp_pair["user"] = content
+                if "assistant" in temp_pair:
+                    # We have a full pair
+                    pairs.append(temp_pair)
+                    temp_pair = {}
+                    count_pairs += 1
+                    if count_pairs >= 3:
+                        break
+                else:
+                    # No assistant reply yet, just user message
+                    pairs.append({"user": content})
+                    temp_pair = {}
+                    count_pairs += 1
+                    if count_pairs >= 3:
+                        break
+        # Format pairs in chronological order (oldest first)
+        pairs = list(reversed(pairs))
+        history_lines = []
+        for pair in pairs:
+            user_text = pair.get("user", "")
+            assistant_text = pair.get("assistant", "")
+            user_text = (user_text[:300] + "...") if len(user_text) > 300 else user_text
+            assistant_text = (assistant_text[:300] + "...") if len(assistant_text) > 300 else assistant_text
+            history_lines.append(f"User: {user_text}")
+            if assistant_text:
+                history_lines.append(f"Engineer: {assistant_text}")
+        history_text = "\n".join(history_lines)
+    else:
+        history_text = "No prior conversation in this session."
 
     live_text = _format_live_state_for_prompt(live_state)
 
     prompt = textwrap.dedent(
         f"""
-        You are a highly experienced GT race engineer working with a Toyota GR86 Cup car.
+        You are a highly experienced GT race engineer working with a Toyota GR86 Cup car
+        and this specific Streamlit app.
 
         ### Static race context
         {context}
@@ -148,15 +296,29 @@ def answer_engineer(
         ### Current live snapshot (may be approximate)
         {live_text}
 
+        ### Recent conversation (last few turns)
+        {history_text}
+
         ### Task
-        - Read the engineer's question carefully.
-        - Use the context + live snapshot to reason about tyre state, pit windows,
-          safety-car risk, and track position.
-        - Respond **as if you were talking on the radio** to the race engineer.
-        - Prefer **3–6 short bullet points**, focusing on:
-          - What matters most strategically,
-          - Clear recommendation (e.g. *box now*, *stay out 3–4 laps*, *hold track position*),
-          - Any key risks / what-ifs to watch.
+        - Interpret the mode of this question: {mode} (race_core, tool_help, smalltalk, offtopic).
+        - For "race_core":
+          - Provide a structured answer with headings:
+            ### Recommendation
+            ### Rationale
+            ### Risks & what to watch
+            ### Next checks
+          - Use 3–8 concise bullet points overall.
+        - For "tool_help":
+          - Explain how to use relevant parts of the app (Strategy Brain, Driver Insights, Predictive Models, Strategy Chat, Decision Reviewer, Vision).
+          - Do not make up track or race data.
+        - For "offtopic":
+          - Politely state the question is not race-related.
+          - Optionally provide a short generic answer.
+          - Then steer the conversation back to race-engineering topics.
+        - If information is missing (e.g., laps remaining, tyre age, gaps), explicitly list missing pieces under a short "Missing info" bullet.
+          Provide conditional logic (e.g., "If X then…, if Y then…").
+        - Never invent precise lap times, gaps, or tyre ages that are not present in the context or live snapshot.
+        - If clarification is needed, end the answer with a "Follow-up questions:" list of specific questions back to the engineer.
 
         Engineer's question:
         {question}
@@ -171,4 +333,3 @@ def answer_engineer(
         return text
     except Exception as e:
         return f"(Gemini chat error: {e})"
- 

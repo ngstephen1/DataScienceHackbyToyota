@@ -887,10 +887,10 @@ with tab_chat:
                     {"role": "assistant", "content": answer}
                 )
 
-        # Render chat history (latest at bottom)
+        # Render chat history (latest at top)
         if st.session_state["chat_history"]:
             st.markdown("#### Conversation")
-            for msg in st.session_state["chat_history"]:
+            for msg in reversed(st.session_state["chat_history"]):
                 if msg["role"] == "user":
                     st.markdown(f"**You:** {msg['content']}")
                 else:
