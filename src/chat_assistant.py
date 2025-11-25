@@ -1,22 +1,7 @@
 from __future__ import annotations
 
 """
-Chat assistant for the Racing Hokies / DataScienceHackbyToyota project.
-
-Goals:
-- Act as a production-style race engineer copilot.
-- Use static race context, live state, and recent chat history.
-- Support different modes: core race strategy, race education, tool help,
-  smalltalk, off-topic.
-- Provide refinement actions on top of the last answer:
-  * shorten
-  * more_detail
-  * visualize
-  * simplify (explain simply)
-
-This module is intentionally verbose and heavily commented to make the logic
-easy to reason about and extend.
-"""
+Chat assistant """
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Literal, Tuple
@@ -26,25 +11,20 @@ import textwrap
 
 import pandas as pd
 import google.generativeai as genai
-
-
-# ---------------------------------------------------------------------------
-# Type aliases
-# ---------------------------------------------------------------------------
+#
 
 ChatRole = Literal["user", "assistant", "system"]
 QuestionMode = Literal["race_core", "race_education", "tool_help", "smalltalk", "offtopic"]
 RefineAction = Literal["shorten", "more_detail", "visualize", "simplify"]
 
 
-# ---------------------------------------------------------------------------
-# Data structures
-# ---------------------------------------------------------------------------
+# Data 
 
 
 @dataclass
 class ChatMessage:
-    """Simple representation of a chat message for prompt construction."""
+    """S
+    imple representation of a chat message for prompt construction   """
     role: ChatRole
     content: str
     meta: Optional[Dict[str, Any]] = None
@@ -60,9 +40,7 @@ class ChatMessage:
         return ChatMessage(role=role, content=content, meta=meta)
 
 
-# ---------------------------------------------------------------------------
-# Pace and context helpers (from your original file, extended but compatible)
-# ---------------------------------------------------------------------------
+# Pace and context helpers 
 
 
 def _summarise_driver_pace(lap_df: pd.DataFrame) -> str:
@@ -108,7 +86,7 @@ def build_chat_context(
     Build a textual context block for the strategy chat.
 
     Parameters
-    ----------
+   HIHIHIHI
     lap_df:
         Per-lap telemetry features for this car / race.
     track_meta:
@@ -163,17 +141,67 @@ def _format_live_state_for_prompt(live_state: Optional[Dict[str, Any]]) -> str:
         return "No current live state snapshot was provided."
     try:
         cleaned = dict(live_state)
-        # Remove noisy or fast-changing keys that add little value to prompting
+
         cleaned.pop("timestamp", None)
         cleaned.pop("debug", None)
         return json.dumps(cleaned, indent=2)
     except Exception:
         return "Live state provided but could not be serialised cleanly."
+    
+#classify
+
+# damn bro helpers
+
+from typing import Tuple
+
+def _detect_refine_action_from_text(question: str) -> Optional[RefineAction]:
+    """
+    Detect if the question is a request to refine the previous answer,
+    and return the corresponding RefineAction if so.
+    """
+    q = question.lower()
+    shorten_words = [
+        "shorter", "shorten", "too long", "more concise", "summarise", "summarize"
+    ]
+    more_detail_words = [
+        "longer", "expand", "more detail", "more details", "elaborate", "tell me more", "go deeper"
+    ]
+    simplify_words = [
+        "simpler", "simple", "explain like i'm five", "eli5", "easier to understand", "in simple terms"
+    ]
+    visualize_words = [
+        "plot", "plots", "graph", "graphs", "visualise", "visualize", "chart", "charts", "show this in a plot", "visualize in plots"
+    ]
+    if any(word in q for word in shorten_words):
+        return "shorten"
+    if any(word in q for word in more_detail_words):
+        return "more_detail"
+    if any(word in q for word in simplify_words):
+        return "simplify"
+    if any(word in q for word in visualize_words):
+        return "visualize"
+    return None
 
 
-# ---------------------------------------------------------------------------
-# Classification and scope helpers
-# ---------------------------------------------------------------------------
+def _get_last_turn(chat_history: Optional[List[Dict[str, str]]]) -> Tuple[Optional[ChatMessage], Optional[ChatMessage]]:
+    """
+    Return last user question and assistant answer as (last_question, last_answer).
+    last_question: most recent user message bÈore the last assistant message.
+    last_answer: most recent assistant message.
+    """
+    messages = _normalise_history(chat_history)
+    if not messages:
+        return (None, None)
+    last_answer = None
+    last_question = None
+    # Iterate from newest to oldest
+    for msg in reversed(messages):
+        if last_answer is None and msg.role == "assistant":
+            last_answer = msg
+        elif last_answer is not None and msg.role == "user":
+            last_question = msg
+            break
+    return (last_question, last_answer)
 
 
 def _is_greeting(question: str) -> bool:
@@ -284,6 +312,10 @@ def _classify_question(question: str) -> QuestionMode:
         return "tool_help"
     if _looks_race_related(q):
         return "race_core"
+    # Special handling: if user asks for a refinement of the previous answer, treat as tool_help instead of offtopic
+    refine_words = ["shorter", "shorten", "longer", "expand", "more detail", "simpler", "simple"]
+    if ("response" in q or "answer" in q) and any(word in q for word in refine_words):
+        return "tool_help"
     return "offtopic"
 
 
@@ -307,9 +339,7 @@ def _summarise_scope() -> str:
     )
 
 
-# ---------------------------------------------------------------------------
 # Chat history handling
-# ---------------------------------------------------------------------------
 
 
 def _normalise_history(chat_history: Optional[List[Dict[str, str]]]) -> List[ChatMessage]:
@@ -382,7 +412,7 @@ def _truncate_text(s: str, max_chars: int = 350) -> str:
 
 def _summarise_history_for_prompt(chat_history: Optional[List[Dict[str, str]]]) -> str:
     """
-    Turn the last few conversation turns into a compact text block for prompting.
+    Turn the last few conversation turn s into a compact text block for prompting.
 
     This is what actually makes the assistant aware of what has been said.
     """
@@ -402,11 +432,7 @@ def _summarise_history_for_prompt(chat_history: Optional[List[Dict[str, str]]]) 
 
     return "\n".join(lines).strip()
 
-
-# ---------------------------------------------------------------------------
-# Local refinement fallbacks (when model is None)
-# ---------------------------------------------------------------------------
-
+#more model refine after heree
 
 def _shorten_text_local(answer: str, max_chars: int = 400) -> str:
     """Very naive local 'shortener' when Gemini is not available."""
@@ -431,11 +457,6 @@ def _simplify_text_local(answer: str) -> str:
     )
 
 
-# ---------------------------------------------------------------------------
-# Main answer generation
-# ---------------------------------------------------------------------------
-
-
 def answer_engineer(
     model: Optional[genai.GenerativeModel],
     question: str,
@@ -455,6 +476,24 @@ def answer_engineer(
     question = (question or "").strip()
     if not question:
         return "Please type a question for the race engineer copilot."
+
+    # --- Check for refine action request ---
+    refine_action = _detect_refine_action_from_text(question)
+    if refine_action is not None:
+        last_q, last_a = _get_last_turn(chat_history)
+        if last_a is None:
+            return "I don't have a previous answer in this session to refine. Ask a new race question, or try again after I respond."
+        base_answer = last_a.content
+        original_question = last_q.content if last_q is not None else ""
+        return refine_answer(
+            model=model,
+            base_answer=base_answer,
+            question=original_question or question,
+            action=refine_action,
+            context=context,
+            live_state=live_state,
+            chat_history=chat_history,
+        )
 
     mode = _classify_question(question)
 
