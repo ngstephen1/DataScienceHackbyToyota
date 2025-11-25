@@ -799,13 +799,20 @@ with tab_chat:
                 else:
                     st.markdown(f"**Engineer Copilot:** {msg['content']}")
 
-# ---------- Live Race Copilot ----------
+# ---------- Live Race Copilot + Decision Reviewer ----------
 with tab_live:
     st.subheader("📡 Live Race Copilot – real-time what-if sandbox")
 
     if lap_df is None or not strategy_available:
         st.info("Live copilot currently available only for tracks with per-lap telemetry (e.g. Barber).")
     else:
+        # Precompute clean laps + max_lap for both live sim + reviewer
+        clean_live = lap_df.copy()
+        if "is_pit_lap" in clean_live.columns:
+            clean_live = clean_live[~clean_live["is_pit_lap"]]
+        clean_live = clean_live.sort_values("lap")
+        max_lap = int(clean_live["lap"].max())
+
         col_cfg, col_live = st.columns([0.9, 1.6])
 
         with col_cfg:
@@ -863,12 +870,6 @@ with tab_live:
             if start_live:
                 st.session_state["live_insights"] = []
 
-                clean = lap_df.copy()
-                if "is_pit_lap" in clean.columns:
-                    clean = clean[~clean["is_pit_lap"]]
-                clean = clean.sort_values("lap")
-                max_lap = int(clean["lap"].max())
-
                 for lap in range(1, max_lap + 1):
                     feats = make_live_feature_vector(
                         lap_df=lap_df,
@@ -903,7 +904,7 @@ with tab_live:
                         else:
                             m3.metric("Est. time to flag", "–")
 
-                    hist = clean[clean["lap"] <= lap][["lap", "lap_time_s"]].set_index("lap")
+                    hist = clean_live[clean_live["lap"] <= lap][["lap", "lap_time_s"]].set_index("lap")
                     chart_placeholder.line_chart(hist, height=180)
 
                     insight_text = gemini_live_insight(GEMINI_MODEL, feats)
@@ -949,6 +950,61 @@ with tab_live:
 
                     time.sleep(tick_delay)
 
+            # ---------- AI Decision Reviewer (static what-if) ----------
+            st.markdown("---")
+            st.markdown("#### 🧾 Decision Reviewer – sanity-check a strategy call")
+
+            if GEMINI_MODEL is None:
+                st.info(
+                    "Set `GEMINI_API_KEY` to enable AI decision review. "
+                    "Right now only heuristic live insights are available."
+                )
+            else:
+                if "lap" in lap_df.columns:
+                    review_lap = st.slider(
+                        "Lap to review",
+                        min_value=1,
+                        max_value=max_lap,
+                        value=max_lap,
+                        step=1,
+                        key="review_lap_slider",
+                    )
+                    default_decision = "Box now for 4 tyres and fuel to the end."
+                    decision_text = st.text_input(
+                        "Describe your intended call (engineer radio-style):",
+                        value=default_decision,
+                        key="decision_text_input",
+                    )
+                    review_button = st.button(
+                        "Review this call",
+                        key="review_button",
+                        help="Ask the AI engineer to agree/disagree and highlight risks.",
+                    )
+
+                    if review_button and decision_text.strip():
+                        with st.spinner("Reviewing the call like a race engineer..."):
+                            feats_review = make_live_feature_vector(
+                                lap_df=lap_df,
+                                current_lap=review_lap,
+                                cfg=cfg,
+                                strategy_name=live_strategy_name,
+                                pit_laps=live_pits,
+                                caution_lap=caution_lap,
+                                caution_len=caution_len,
+                                push_factor=push_factor,
+                                risk_pref=risk_pref,
+                            )
+
+                            review_text = review_decision(
+                                GEMINI_MODEL,
+                                decision_text,
+                                feats_review,
+                            )
+
+                        st.markdown("**AI Decision Review:**")
+                        st.markdown(review_text)
+                else:
+                    st.info("Lap index not available – cannot run decision review on this dataset.")
 
 
 st.markdown("---")

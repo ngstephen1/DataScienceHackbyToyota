@@ -2,12 +2,12 @@
   "track_id": "barber-motorsports-park",
   "race": "R2",
   "car_id": "GR86-002-000",
-  "lap": 20,
+  "lap": 2,
   "max_lap": 28,
-  "x_norm": 0.4831623690319342,
-  "y_norm": 0.2782597402597403,
+  "x_norm": 0.5506948365644017,
+  "y_norm": 0.6182277722277723,
   "tyre_flag": "🔴 Heavy deg",
-  "last5_delta_vs_best_s": 49.10079999999999,
+  "last5_delta_vs_best_s": 25.53049999999999,
   "push_factor": 1.0,
   "risk_pref": 0.4,
   "subjective_caution_prob_pct": 20,
@@ -16,8 +16,8 @@
   ],
   "caution_lap": 10,
   "caution_len": 2,
-  "gemini_insight": "Here's the read:\n\n*   Pace is solid on 10-lap old tires, showing slight improvement. Tyre degradation is well managed.\n*   Pit stop complete; strategy executed on Lap 10. No further pit window to consider.\n*   A late caution means a sprint to the finish. Focus on track position for the inevitable restart.",
-  "timestamp": 1764024998.2233012,
+  "gemini_insight": "Here's the read:\n\n*   Pace is strong, running significantly faster than median. Tires holding up well.\n*   Hold L10 pit target for now.\n*   Predicted caution on Lap 10 lines up perfectly with our pit. No immediate caution expected in the next 3 laps.",
+  "timestamp": 1764029371.895545,
   "session_id": "barber",
-  "saved_at": 1764024998.223315
+  "saved_at": 1764029371.895562
 }
