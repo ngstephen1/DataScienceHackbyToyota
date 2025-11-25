@@ -1,18 +1,8 @@
 from __future__ import annotations
 
 """
-Chat assistant for the Toyota DataSense project.
+Chat assistant !
 
-Goals:
-- Act as a specialised GT race engineer copilot.
-- Use static race context, live_state snapshots, and conversation history.
-- Support refinement actions: shorten, more detail, visualize, simplify.
-- Adapt answer style to user preferences inferred from past interactions.
-- Be robust to off-topic or general-purpose questions and gently steer
-  back toward race engineering when needed.
-
-Note: This module uses simple, heuristic "preference learning" and
-history summarisation. It is **not** full reinforcement learning.
 """
 
 from dataclasses import dataclass
@@ -32,10 +22,6 @@ RefineAction = Literal["shorten", "more_detail", "visualize", "simplify"]
 Verbosity = Literal["short", "medium", "long"]
 ExplainStyle = Literal["technical", "balanced", "simple"]
 
-
-# ---------------------------------------------------------------------------
-# Data structures
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -87,9 +73,6 @@ class UserPreferences:
         ).strip()
 
 
-# ---------------------------------------------------------------------------
-# Pace and context helpers
-# ---------------------------------------------------------------------------
 
 
 def _summarise_driver_pace(lap_df: pd.DataFrame) -> str:
@@ -245,10 +228,7 @@ def _summarise_live_state_naturally(live_state: Optional[Dict[str, Any]]) -> str
     return "Live state summary: " + " ".join(parts)
 
 
-# ---------------------------------------------------------------------------
-# Preference / "reinforcement-style" helpers
-# ---------------------------------------------------------------------------
-
+# RL
 
 def _detect_refine_action_from_text(question: str) -> Optional[RefineAction]:
     """Detect if the question is a request to refine the previous answer."""
@@ -377,10 +357,7 @@ def _infer_user_preferences(chat_history: Optional[List[Dict[str, Any]]]) -> Use
     return prefs
 
 
-# ---------------------------------------------------------------------------
-# Question classification
-# ---------------------------------------------------------------------------
-
+# classify input and handle process
 
 def _get_last_turn(chat_history: Optional[List[Dict[str, Any]]]) -> Tuple[Optional[ChatMessage], Optional[ChatMessage]]:
     """
@@ -538,9 +515,8 @@ def _summarise_scope() -> str:
     )
 
 
-# ---------------------------------------------------------------------------
+# later fix interaction!
 # Chat history handling
-# ---------------------------------------------------------------------------
 
 
 def _normalise_history(chat_history: Optional[List[Dict[str, Any]]]) -> List[ChatMessage]:
@@ -633,11 +609,7 @@ def _summarise_history_for_prompt(chat_history: Optional[List[Dict[str, Any]]]) 
 
     return "\n".join(lines).strip()
 
-
-# ---------------------------------------------------------------------------
 # Local refinement helpers
-# ---------------------------------------------------------------------------
-
 
 def _shorten_text_local(answer: str, max_chars: int = 400) -> str:
     """Very naive local 'shortener' when Gemini is not available."""
@@ -661,11 +633,7 @@ def _simplify_text_local(answer: str) -> str:
         + _truncate_text(first_para, max_chars=400)
     )
 
-
-# ---------------------------------------------------------------------------
 # Core answer function
-# ---------------------------------------------------------------------------
-
 
 def answer_engineer(
     model: Optional[genai.GenerativeModel],
@@ -868,9 +836,7 @@ def answer_engineer(
         return f"(Gemini chat error: {e})"
 
 
-# ---------------------------------------------------------------------------
 # Refinement of existing answers
-# ---------------------------------------------------------------------------
 
 
 def refine_answer(
