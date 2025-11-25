@@ -479,7 +479,7 @@ This exercises core loading and geometry logic to ensure things run without erro
 ### 📑 Project Index
 
 <details open>
-	<summary><b><code>DATASCIENCE HACK BY TOYOTA/</code></b></summary>
+	<summary><b><code>DataScienceHackbyToyota/</code></b></summary>
 	<!-- __root__ Submodule -->
 	<details>
 		<summary><b>__root__</b></summary>
