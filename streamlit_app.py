@@ -1,4 +1,5 @@
 from __future__ import annotations
+from src import race_plots
 from src.decision_reviewer import review_decision
 from src.predictive_models import predict_lap_times_for
 from src.chat_assistant import build_chat_context, answer_engineer
@@ -838,7 +839,7 @@ with tab_chat:
             "(Barber). Enable once lap_features are available."
         )
     else:
-        # Build a static context once per session
+        # Build a static context once per session (optional optimisation)
         context = build_chat_context(
             lap_df=lap_df,
             track_meta=meta,
@@ -852,7 +853,9 @@ with tab_chat:
             "Ask anything like:  \n"
             "- *“If we box this lap, do we undercut the car ahead?”*  \n"
             "- *“How risky is it to stay out if a caution comes in the next 3 laps?”*  \n"
-            "- *“Which stint looks weakest so far and why?”*"
+            "- *“Which stint looks weakest so far and why?”*  \n"
+            "- Or even just say **hi** or ask a general question – the copilot will tell you "
+            "when something is off-topic and what it *can* help with."
         )
 
         user_q = st.text_area(
@@ -878,6 +881,7 @@ with tab_chat:
                     question=user_q,
                     context=context,
                     live_state=live_state,
+                    chat_history=st.session_state["chat_history"],
                 )
 
                 st.session_state["chat_history"].append(
@@ -890,11 +894,140 @@ with tab_chat:
         # Render chat history (latest at top)
         if st.session_state["chat_history"]:
             st.markdown("#### Conversation")
+
             for msg in reversed(st.session_state["chat_history"]):
                 if msg["role"] == "user":
                     st.markdown(f"**You:** {msg['content']}")
                 else:
                     st.markdown(f"**Engineer Copilot:** {msg['content']}")
+
+            # ---- Refinement tools for the latest answer ----
+            # Find latest user + assistant messages
+            last_user = None
+            last_assistant = None
+            for msg in reversed(st.session_state["chat_history"]):
+                if msg["role"] == "assistant" and last_assistant is None:
+                    last_assistant = msg
+                elif msg["role"] == "user" and last_user is None:
+                    last_user = msg
+                if last_user is not None and last_assistant is not None:
+                    break
+
+            if last_user is not None and last_assistant is not None:
+                st.markdown("#### Refine latest answer")
+                c1, c2, c3, c4 = st.columns(4)
+                shorten_click = c1.button("Shorten", key="refine_shorten")
+                viz_click = c2.button("Visualize in plots", key="refine_viz")
+                more_click = c3.button("More detail", key="refine_more")
+                explain_click = c4.button("Explain like I'm new", key="refine_explain")
+
+                action_instruction = None
+                want_local_plots = False
+
+                if shorten_click:
+                    action_instruction = (
+                        "Please shorten and tighten your previous answer, keeping only the key "
+                        "recommendation and rationale for the race engineer."
+                    )
+                elif viz_click:
+                    action_instruction = (
+                        "Please propose a few simple plots or tables (described in text) that "
+                        "would help visualize your previous answer. Do NOT write code; just "
+                        "describe the visuals and what they would show."
+                    )
+                    # also try to build local figures from current Barber data
+                    want_local_plots = True
+                elif more_click:
+                    action_instruction = (
+                        "Please expand your previous answer with more technical detail, edge "
+                        "cases, and concrete examples, while keeping it grounded in the data "
+                        "and strategy context."
+                    )
+                elif explain_click:
+                    action_instruction = (
+                        "Please explain your previous answer in simpler, beginner-friendly "
+                        "language, avoiding jargon. Assume the person is new to racing and "
+                        "telemetry."
+                    )
+
+                if action_instruction is not None:
+                    followup_prompt = (
+                        f"{action_instruction}\n\n"
+                        f"Original question:\n{last_user['content']}\n\n"
+                        f"Your previous answer:\n{last_assistant['content']}"
+                    )
+
+                    with st.spinner("Refining the last answer..."):
+                        live_state = None
+                        live_state_path = get_live_state_path("barber")
+                        if live_state_path.exists():
+                            try:
+                                live_state = json.loads(
+                                    live_state_path.read_text(encoding="utf-8")
+                                )
+                            except Exception:
+                                live_state = None
+
+                        # Use the same engine, but with a refinement meta-question
+                        followup_answer = answer_engineer(
+                            model=GEMINI_MODEL,
+                            question=followup_prompt,
+                            context=context,
+                            live_state=live_state,
+                            chat_history=st.session_state["chat_history"],
+                        )
+
+                    # Log refinement as a new turn
+                    st.session_state["chat_history"].append(
+                        {"role": "user", "content": f"[Refinement] {action_instruction}"}
+                    )
+                    st.session_state["chat_history"].append(
+                        {"role": "assistant", "content": followup_answer}
+                    )
+
+                    st.info("Refinement added to the conversation. Latest response is shown at the top.")
+
+                    # If the user requested plots, optionally generate local visuals too
+                    if want_local_plots and lap_df is not None:
+                        with st.expander("📊 Quick plots from current Barber data", expanded=True):
+                            # If you implemented helpers in race_plots, use them here.
+                            # This block is guarded with hasattr so it won't break if not present.
+                            if hasattr(race_plots, "render_quick_insights"):
+                                try:
+                                    race_plots.render_quick_insights(
+                                        st=st,
+                                        lap_df=lap_df,
+                                        question=last_user["content"],
+                                        answer=last_assistant["content"],
+                                    )
+                                except Exception as e:
+                                    st.warning(
+                                        f"Could not render custom race plots for this answer: {e}"
+                                    )
+                            else:
+                                # Fallback: simple generic lap-time visual
+                                try:
+                                    fig, ax = plt.subplots()
+                                    df_plot = lap_df.sort_values("lap")
+                                    ax.plot(
+                                        df_plot["lap"],
+                                        df_plot["lap_time_s"],
+                                        "o-",
+                                        label="Lap time (s)",
+                                    )
+                                    ax.set_xlabel("Lap")
+                                    ax.set_ylabel("Lap time (s)")
+                                    ax.set_title("Generic lap-time evolution (Barber)")
+                                    ax.legend()
+                                    st.pyplot(fig)
+                                    st.caption(
+                                        "Local plotting helper in `race_plots` is not wired yet; "
+                                        "showing a basic lap-time evolution plot as a fallback."
+                                    )
+                                except Exception as e:
+                                    st.warning(
+                                        f"Could not draw fallback lap-time plot: {e}"
+                                    )
 
 # ---------- Live Race Copilot + Decision Reviewer ----------
 with tab_live:

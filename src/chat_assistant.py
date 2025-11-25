@@ -1,127 +1,88 @@
 from __future__ import annotations
 
 """
+Chat assistant for the Racing Hokies / DataScienceHackbyToyota project.
 
-Conversational race-engineer assistant for the Streamlit app.
+Goals:
+- Act as a production-style race engineer copilot.
+- Use static race context, live state, and recent chat history.
+- Support different modes: core race strategy, race education, tool help,
+  smalltalk, off-topic.
+- Provide refinement actions on top of the last answer:
+  * shorten
+  * more_detail
+  * visualize
+  * simplify (explain simply)
 
+This module is intentionally verbose and heavily commented to make the logic
+easy to reason about and extend.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Optional, Literal, Tuple
+
 import json
-import math
-import statistics
 import textwrap
 
 import pandas as pd
 import google.generativeai as genai
 
 
-# Data structures
+# ---------------------------------------------------------------------------
+# Type aliases
+# ---------------------------------------------------------------------------
 
-RoleLiteral = Literal["user", "assistant"]
-IntentLiteral = Literal[
-    "race_core",        # direct strategy / telemetry / lap questions
-    "race_education",   # general race engineering questions ("what is a race engineer?")
-    "tool_help",        # questions about how to use this particular app
-    "smalltalk",        # greetings / light chat
-    "offtopic",         # everything else
-]
+ChatRole = Literal["user", "assistant", "system"]
+QuestionMode = Literal["race_core", "race_education", "tool_help", "smalltalk", "offtopic"]
+RefineAction = Literal["shorten", "more_detail", "visualize", "simplify"]
+
+
+# ---------------------------------------------------------------------------
+# Data structures
+# ---------------------------------------------------------------------------
 
 
 @dataclass
-class ChatTurn:
-    """A single turn in the conversation history.
-
-    This mirrors the structure used in Streamlit session state.
-    """
-
-    role: RoleLiteral
+class ChatMessage:
+    """Simple representation of a chat message for prompt construction."""
+    role: ChatRole
     content: str
+    meta: Optional[Dict[str, Any]] = None
 
-# @to do: handle data return later
-
-def _safe_float(value: Any) -> Optional[float]:
-    """Convert *value* to ``float`` if possible, otherwise ``None``.
-
-    This is used throughout the summarisation helpers so that missing
-    columns never trigger exceptions.
-    """
-
-    try:
-        if value is None:
-            return None
-        return float(value)
-    except Exception:
-        return None
+    @staticmethod
+    def from_dict(raw: Dict[str, Any]) -> "ChatMessage":
+        """Normalise a dict from Streamlit session_state into ChatMessage."""
+        role = raw.get("role", "user")
+        if role not in ("user", "assistant", "system"):
+            role = "user"
+        content = str(raw.get("content", "") or "")
+        meta = raw.get("meta", None)
+        return ChatMessage(role=role, content=content, meta=meta)
 
 
-def _fmt_opt(value: Optional[float], suffix: str = "", ndigits: int = 3) -> str:
-    """Format an optional float.
-
-    If ``value`` is ``None`` return ``"unknown"``; otherwise format to
-    *ndigits* decimal places and append *suffix*.
-    """
-
-    if value is None or (isinstance(value, float) and math.isnan(value)):
-        return "unknown"
-    return f"{value:.{ndigits}f}{suffix}"
-
-
-def _percent(frac: Optional[float]) -> str:
-    """Format a fraction (0-1) as a percentage string.
-
-    ``None`` or NaN become ``"unknown"``.
-    """
-
-    if frac is None or (isinstance(frac, float) and math.isnan(frac)):
-        return "unknown"
-    return f"{frac * 100:.1f}%"
-
-
-# race summarisation utilities
-
-
-def _drop_pit_laps(df: pd.DataFrame) -> pd.DataFrame:
-    """Return df with pit laps removed when an ``is_pit_lap`` column exists."""
-
-    if "is_pit_lap" in df.columns:
-        return df[~df["is_pit_lap"]].copy()
-    return df.copy()
+# ---------------------------------------------------------------------------
+# Pace and context helpers (from your original file, extended but compatible)
+# ---------------------------------------------------------------------------
 
 
 def _summarise_driver_pace(lap_df: pd.DataFrame) -> str:
-    """Build a short text summary of driver pace from ``lap_df``.
+    """Build a short text summary of driver pace from lap_df."""
+    df = lap_df.copy()
 
-    The function is defensive: it tolerates missing columns and
-    returns a clear message instead of raising.
-
-    
-    
-    damn so good
-    """
-
-    df = _drop_pit_laps(lap_df)
+    # Drop pit laps if flagged
+    if "is_pit_lap" in df.columns:
+        df = df[~df["is_pit_lap"]]
 
     if df.empty or "lap_time_s" not in df.columns:
         return "Lap-time summary unavailable (no non-pit laps with lap_time_s)."
 
-    lap_times = [float(x) for x in df["lap_time_s"].values if pd.notna(x)]
-    if not lap_times:
-        return "Lap-time summary unavailable (lap_time_s is all NaN)."
+    best = float(df["lap_time_s"].min())
+    med = float(df["lap_time_s"].median())
+    std = float(df["lap_time_s"].std())
+    n_laps = int(df.shape[0])
 
-    best = min(lap_times)
-    med = statistics.median(lap_times)
-    std = statistics.pstdev(lap_times) if len(lap_times) > 1 else 0.0
-    n_laps = len(lap_times)
-
-    lap_numbers = [int(x) for x in df["lap"].values if pd.notna(x)] if "lap" in df.columns else []
-    first_lap = min(lap_numbers) if lap_numbers else None
-    last_lap = max(lap_numbers) if lap_numbers else None
-
-    first_last = (
-        f"Laps range from {first_lap} to {last_lap}" if first_lap is not None and last_lap is not None else "Lap range unknown"
-    )
+    first_lap = int(df["lap"].min()) if "lap" in df.columns else 0
+    last_lap = int(df["lap"].max()) if "lap" in df.columns else 0
 
     return textwrap.dedent(
         f"""
@@ -130,117 +91,9 @@ def _summarise_driver_pace(lap_df: pd.DataFrame) -> str:
         - Best lap: {best:.3f} s
         - Median lap: {med:.3f} s
         - Lap-time spread (std dev): {std:.3f} s
-        - {first_last}
+        - Laps range from {first_lap} to {last_lap}
         """
     ).strip()
-
-
-def _summarise_stints(lap_df: pd.DataFrame) -> str:
-    """Summarise tyre stints when ``stint_index`` / ``stint_lap`` exist.
-
-    The summary intentionally stays high-level so that it can be
-    embedded in the prompt without blowing context length.
-    """
-
-    if "stint_index" not in lap_df.columns:
-        return "Stint summary: not available (stint_index column missing)."
-
-    df = _drop_pit_laps(lap_df)
-    if df.empty:
-        return "Stint summary: no non-pit laps available."
-
-    parts: List[str] = ["Stint overview:"]
-
-    grouped = df.groupby("stint_index", sort=True)
-    for stint_idx, g in grouped:
-        laps = g["lap"].tolist() if "lap" in g.columns else []
-        if not laps:
-            continue
-        n = len(laps)
-        first, last = int(min(laps)), int(max(laps))
-        lt = [float(x) for x in g.get("lap_time_s", []) if pd.notna(x)]
-        best = min(lt) if lt else None
-        med = statistics.median(lt) if lt else None
-        parts.append(
-            "- Stint {idx}: laps {first}-{last} ({n} laps), best {best}, median {med}".format(
-                idx=int(stint_idx),
-                first=first,
-                last=last,
-                n=n,
-                best=_fmt_opt(best, " s"),
-                med=_fmt_opt(med, " s"),
-            )
-        )
-
-    return "\n".join(parts) if len(parts) > 1 else "Stint summary: could not compute."
-
-
-def _summarise_sectors(lap_df: pd.DataFrame) -> str:
-    """Return a compact summary of sector performance if present.
-
-    Expected columns: ``sector1_time_s``, ``sector2_time_s``,
-    ``sector3_time_s``. Missing columns are ignored.
-    """
-
-    df = _drop_pit_laps(lap_df)
-    cols = [c for c in ["sector1_time_s", "sector2_time_s", "sector3_time_s"] if c in df.columns]
-    if not cols or df.empty:
-        return "Sector summary: not available."
-
-    lines = ["Sector overview (clean laps):"]
-    for col in cols:
-        vals = [float(x) for x in df[col].values if pd.notna(x)]
-        if not vals:
-            continue
-        best = min(vals)
-        med = statistics.median(vals)
-        lines.append(f"- {col.replace('_time_s', '').title()}: best {best:.3f} s, median {med:.3f} s")
-
-    return "\n".join(lines) if len(lines) > 1 else "Sector summary: not available."
-
-
-def _summarise_recent_form(lap_df: pd.DataFrame, window: int = 5) -> str:
-    """Summarise the most recent *window* laps.
-
-    The goal is to give the mmodel a quick view of whether things are
-    trending up or down.
-    """
-
-    if "lap" not in lap_df.columns or "lap_time_s" not in lap_df.columns:
-        return "Recent form: lap and lap_time_s columns not available."
-
-    df = _drop_pit_laps(lap_df)
-    if df.empty:
-        return "Recent form: no clean laps available."
-
-    df = df.sort_values("lap")
-    tail = df.tail(window)
-
-    laps = tail["lap"].tolist()
-    times = [float(x) for x in tail["lap_time_s"].tolist() if pd.notna(x)]
-
-    if not times:
-        return "Recent form: lap_time_s missing in the last laps."
-
-    first, last = int(min(laps)), int(max(laps))
-    first_t, last_t = times[0], times[-1]
-    delta = last_t - first_t
-
-    trend = "stable"
-    if abs(delta) > 0.8:
-        trend = "improving" if delta < 0 else "worsening"
-    elif abs(delta) > 0.3:
-        trend = "slightly improving" if delta < 0 else "slightly worsening"
-
-    return (
-        f"Recent form (last {len(times)} clean laps, {first}-{last}): "
-        f"from {first_t:.3f}s to {last_t:.3f}s ({delta:+.3f}s, {trend})."
-    )
-
-
-# ---------------------------------------------------------------------------
-# Context builder used by Streamlit
-# ---------------------------------------------------------------------------
 
 
 def build_chat_context(
@@ -251,27 +104,26 @@ def build_chat_context(
     race: str,
     car_id: str,
 ) -> str:
-    """Build a textual context block for the strategy chat.
+    """
+    Build a textual context block for the strategy chat.
 
     Parameters
-    HIHHIHIHIH
+    ----------
     lap_df:
         Per-lap telemetry features for this car / race.
     track_meta:
-        Entry from TRACK_METAS for the selected track (has .name,
-        .pit_lane_time_s, etc.).
+        Entry from TRACK_METAS for the selected track (has .name, .pit_lane_time_s, etc.).
     cfg:
-        Strategy config object returned by ``make_config_from_meta``.
+        Strategy config object returned by make_config_from_meta.
     strategies:
-        Mapping of ``strategy_name -> list of pit laps``.
+        Dict of strategy_name -> list of pit laps.
     race, car_id:
-        Current race label (e.g. ``"R2"``) and car identifier.
+        Current race label (e.g. 'R2') and car identifier.
     """
-
     track_name = getattr(track_meta, "name", "Unknown track")
-    pit_loss = _safe_float(getattr(cfg, "pit_loss_s", None))
-    base_lap = _safe_float(getattr(cfg, "base_lap_s", None))
-    total_laps = int(lap_df["lap"].max()) if "lap" in lap_df.columns else None
+    pit_loss = getattr(cfg, "pit_loss_s", None)
+    base_lap = getattr(cfg, "base_lap_s", None)
+    total_laps = int(lap_df["lap"].max()) if "lap" in lap_df.columns and not lap_df.empty else None
 
     strat_lines: List[str] = []
     for name, pits in strategies.items():
@@ -281,9 +133,6 @@ def build_chat_context(
     strat_block = "\n".join(strat_lines) if strat_lines else "(no strategies defined)"
 
     pace_block = _summarise_driver_pace(lap_df)
-    stint_block = _summarise_stints(lap_df)
-    sector_block = _summarise_sectors(lap_df)
-    recent_block = _summarise_recent_form(lap_df)
 
     header = textwrap.dedent(
         f"""
@@ -291,9 +140,9 @@ def build_chat_context(
         - Track: {track_name}
         - Race: {race}
         - Car: {car_id}
-        - Total race laps: {total_laps if total_laps is not None else 'unknown'}
-        - Base clean lap (trimmed median): {_fmt_opt(base_lap, ' s')}
-        - Pit lane loss (green): {_fmt_opt(pit_loss, ' s')}
+        - Total race laps: {total_laps if total_laps is not None else "unknown"}
+        - Base clean lap (trimmed median): {base_lap:.3f} s
+        - Pit lane loss (green): {pit_loss:.3f} s
         """
     ).strip()
 
@@ -304,67 +153,51 @@ def build_chat_context(
         """
     ).strip()
 
-    context_blocks = [header, pace_block, stint_block, sector_block, recent_block, strategies_text]
-    context = "\n\n".join(context_blocks)
+    context = "\n\n".join([header, pace_block, strategies_text])
     return context
 
 
-# ---------------------------------------------------------------------------
-# Live state serialisation helpers
-# ---------------------------------------------------------------------------
-
-
 def _format_live_state_for_prompt(live_state: Optional[Dict[str, Any]]) -> str:
-    """Convert a live-state dict (or ``None``) into a human-readable snippet.
-
-    We strip out high-churn keys such as timestamps and try to keep the
-    JSON small so that it doesn’t dominate the prompt.
-    """
-
+    """Make a compact JSON-like block from the current live_state."""
     if not live_state:
         return "No current live state snapshot was provided."
     try:
         cleaned = dict(live_state)
-        # Remove keys that usually don’t change the meaning of the state
-        for noisy_key in ["timestamp", "last_updated", "hash"]:
-            cleaned.pop(noisy_key, None)
-        return json.dumps(cleaned, indent=2, sort_keys=True)
+        # Remove noisy or fast-changing keys that add little value to prompting
+        cleaned.pop("timestamp", None)
+        cleaned.pop("debug", None)
+        return json.dumps(cleaned, indent=2)
     except Exception:
         return "Live state provided but could not be serialised cleanly."
 
 
 # ---------------------------------------------------------------------------
-# Lightweight intent classification
+# Classification and scope helpers
 # ---------------------------------------------------------------------------
-
-_GREETING_KEYWORDS = [
-    "hi",
-    "hi there",
-    "hello",
-    "hey",
-    "hey there",
-    "yo",
-    "good morning",
-    "good afternoon",
-    "good evening",
-]
 
 
 def _is_greeting(question: str) -> bool:
-    """Return ``True`` if *question* looks like a greeting or smalltalk."""
-
+    greetings = [
+        "hi",
+        "hi there",
+        "hello",
+        "hey",
+        "hey there",
+        "yo",
+        "good morning",
+        "good afternoon",
+        "good evening",
+    ]
     q = question.strip().lower()
-    if q in _GREETING_KEYWORDS or q in ["how are you", "how are you?"]:
+    if q in greetings or q in ["how are you", "how are you?"]:
         return True
-    for greet in _GREETING_KEYWORDS:
+    for greet in greetings:
         if q.startswith(greet + " "):
             return True
     return False
 
 
 def _looks_race_related(question: str) -> bool:
-    """Heuristic: does *question* look like a race / telemetry question?"""
-
     q = question.lower()
     keywords = [
         "lap",
@@ -375,6 +208,7 @@ def _looks_race_related(question: str) -> bool:
         "tire",
         "safety car",
         "yellow flag",
+        "full course yellow",
         "caution",
         "strategy",
         "stint",
@@ -388,179 +222,218 @@ def _looks_race_related(question: str) -> bool:
         "overcut",
         "fuel save",
         "push now",
-        "protect the tyres",
+        "protect tyres",
     ]
     return any(kw in q for kw in keywords)
 
 
 def _looks_race_education(question: str) -> bool:
-    """Detect general racing / engineering explainer questions.
-
-    Examples:
-    - "what is a race engineer?"
-    - "how does an undercut work?"
-    - "why do we save tyres behind a safety car?"
-    """
-
+    """Questions like 'what is an undercut', 'explain tyre deg'."""
     q = question.strip().lower()
-    edu_keywords = [
-        "what is a race engineer",
-        "what is race engineer",
-        "what does a race engineer",
-        "explain undercut",
-        "explain overcut",
-        "what is a safety car",
-        "what is tyre deg",
-        "what is tire deg",
-        "why do we pit",
-        "why do we save fuel",
+    edu_prefixes = [
+        "what is",
+        "what's",
+        "explain",
+        "why do",
+        "why does",
+        "how does",
+        "how do",
+        "can you explain",
+        "could you explain",
+        "what does",
     ]
-    if any(k in q for k in edu_keywords):
-        return True
-
-    # Generic pattern: "what is" / "how does" + race-y word
-    if (q.startswith("what is") or q.startswith("how does")) and _looks_race_related(q):
+    if any(q.startswith(p) for p in edu_prefixes) and _looks_race_related(q):
         return True
     return False
 
 
-_TOOL_KEYWORDS = [
-    "streamlit",
-    "app",
-    "dashboard",
-    "tool",
-    "button",
-    "tab",
-    "predictive model",
-    "decision reviewer",
-    "chatbot",
-    "vision",
-    "computer vision",
-    "live race copilot",
-    "strategy brain",
-    "driver insights",
-]
+def _looks_tool_help(question: str) -> bool:
+    q = question.lower()
+    tool_keywords = [
+        "streamlit",
+        "app",
+        "dashboard",
+        "tab",
+        "button",
+        "predictive model",
+        "predictive models",
+        "decision reviewer",
+        "chatbot",
+        "vision",
+        "computer vision",
+        "strategy chat",
+        "live race copilot",
+        "driver insights",
+        "strategy brain",
+        "data sense",
+        "toyota datasense",
+    ]
+    return any(kw in q for kw in tool_keywords)
 
 
-def _classify_question(question: str) -> IntentLiteral:
-    """Rough intent classification.
-
-    This is rule-based on purpose so that behaviour is predictable and
-    easy to adjust without retraining any model.
-    """
-
+def _classify_question(question: str) -> QuestionMode:
+    """Classify the question into one of our modes."""
     q = question.strip().lower()
 
     if _is_greeting(q):
         return "smalltalk"
-
     if _looks_race_education(q):
         return "race_education"
-
+    if _looks_tool_help(q):
+        # Explicit tool-help wins over generic race-core in this heuristic
+        return "tool_help"
     if _looks_race_related(q):
         return "race_core"
-
-    if any(kw in q for kw in _TOOL_KEYWORDS):
-        return "tool_help"
-
     return "offtopic"
 
 
-# helper like a pro
-
-
 def _summarise_scope() -> str:
-    """Return a human-readable description of what the assistant can do."""
-
+    """Short description of what this assistant can and cannot do."""
     return (
         "I’m your GT race engineer assistant. I can:\n"
         "- Explain laps, stints, tyre phases, and gaps\n"
-        "- Compare pit timing options (box now vs stay out)\n"
-        "- Reason about cautions / safety car risk\n"
-        "- Interpret predictive models used in this app\n"
+        "- Compare pit timing options and 1-stop vs 2-stop strategies\n"
+        "- Reason about cautions / safety car windows\n"
+        "- Interpret simple predictive models used in this app\n"
         "- Review race-engineer decisions and strategy options\n"
         "- Explain how to use the app tabs:\n"
-        "  * Strategy Brain\n"
-        "  * Driver Insights\n"
-        "  * Predictive Models\n"
-        "  * Strategy Chat\n"
-        "  * Live Race Copilot\n"
-        "  * Vision (including computer vision features)\n"
-        "- Handle light smalltalk but I’m specialised for racing and strategy."
+        "  * Strategy Brain (offline strategy multiverse)\n"
+        "  * Driver Insights (pace, sectors, degradation)\n"
+        "  * Predictive Models (lap-time forecasting)\n"
+        "  * Strategy Chat (this assistant)\n"
+        "  * Live Race Copilot (live-state driven recommendations)\n"
+        "  * Vision (computer vision / image-based insights)\n"
+        "- Handle light smalltalk, but I’m specialised for racing and strategy."
     )
 
 
-def _summarise_app_tabs() -> str:
-    """Return a brief description of each major Streamlit tab.
-
-    This text is reused both in model prompts and in the non-model
-    fallback path so that behaviour stays consistent.
-    """
-
-    lines = [
-        "This app is organised into several tabs:",
-        "- **Strategy Brain** – compare pit strategies, caution windows, and Monte Carlo simulations.",
-        "- **Driver Insights** – analyse lap times, sector performance, and tyre degradation.",
-        "- **Predictive Models** – train and visualise lap-time models on per-lap features.",
-        "- **Strategy Chat** – this conversational assistant, grounded in your data.",
-        "- **Live Race Copilot** – live feed that combines heuristics with Gemini for radio-style calls.",
-        "- **Vision** – computer-vision experiments analysing on-track images of the car and circuit.",
-    ]
-    return "\n".join(lines)
+# ---------------------------------------------------------------------------
+# Chat history handling
+# ---------------------------------------------------------------------------
 
 
-
-# answer_engineer
-
-
-
-def _summarise_history(chat_history: Optional[Iterable[Dict[str, str]]]) -> str:
-    """Turn a list of chat turns into a compact text snippet.
-
-    Only the last few turns are kept and each turn is truncated. This
-    is enough for coherence without consuming the whole context window.
-    """
-
+def _normalise_history(chat_history: Optional[List[Dict[str, str]]]) -> List[ChatMessage]:
+    """Convert raw chat history list of dicts into ChatMessage objects."""
     if not chat_history:
-        return "No prior conversation in this session."
+        return []
+    messages: List[ChatMessage] = []
+    for raw in chat_history:
+        try:
+            messages.append(ChatMessage.from_dict(raw))
+        except Exception:
+            # Best effort; skip malformed entries
+            continue
+    return messages
 
-    # We expect a list of dicts with keys 'role' and 'content'.
-    # We walk from the end backwards and collect up to 3 pairs.
-    pairs: List[Tuple[str, str]] = []  # (user, assistant)
-    current_user: Optional[str] = None
-    current_assistant: Optional[str] = None
 
-    for turn in reversed(list(chat_history)):
-        role = turn.get("role", "")
-        content = turn.get("content", "")
-        if role == "assistant":
+def _pair_history(
+    messages: List[ChatMessage],
+    max_pairs: int = 4,
+) -> List[Tuple[Optional[ChatMessage], Optional[ChatMessage]]]:
+    """
+    Group recent history into (user, assistant) pairs.
+
+    Returns list ordered oldest -> newest.
+    Each item is (user_msg, assistant_msg); either can be None.
+    """
+    if not messages:
+        return []
+
+    pairs: List[Tuple[Optional[ChatMessage], Optional[ChatMessage]]] = []
+    current_user: Optional[ChatMessage] = None
+    current_assistant: Optional[ChatMessage] = None
+
+    # Iterate from newest to oldest, then reverse at the end
+    for msg in reversed(messages):
+        if msg.role == "assistant":
             if current_assistant is None:
-                current_assistant = content
-        elif role == "user":
+                current_assistant = msg
+            else:
+                # If we already had an assistant response, push existing pair
+                pairs.append((current_user, current_assistant))
+                current_user = None
+                current_assistant = msg
+        elif msg.role == "user":
             if current_user is None:
-                current_user = content
-        # When we have at least a user message, close the pair
-        if current_user is not None:
-            pairs.append((current_user, current_assistant or ""))
-            current_user = None
-            current_assistant = None
-        if len(pairs) >= 3:
+                current_user = msg
+            else:
+                # Push older user-only if no assistant yet
+                pairs.append((current_user, current_assistant))
+                current_user = msg
+                current_assistant = None
+
+        if len(pairs) >= max_pairs:
             break
+
+    # Push any remaining current pair
+    if current_user is not None or current_assistant is not None:
+        pairs.append((current_user, current_assistant))
+
+    # We built from newest to oldest, reverse to get chronological order
+    return list(reversed(pairs[-max_pairs:]))
+
+
+def _truncate_text(s: str, max_chars: int = 350) -> str:
+    s = s.strip()
+    if len(s) <= max_chars:
+        return s
+    return s[: max_chars - 3] + "..."
+
+
+def _summarise_history_for_prompt(chat_history: Optional[List[Dict[str, str]]]) -> str:
+    """
+    Turn the last few conversation turns into a compact text block for prompting.
+
+    This is what actually makes the assistant aware of what has been said.
+    """
+    messages = _normalise_history(chat_history)
+    pairs = _pair_history(messages, max_pairs=4)
 
     if not pairs:
         return "No prior conversation in this session."
 
-    pairs.reverse()  # chronological order
-
     lines: List[str] = []
-    for u, a in pairs:
-        u_short = (u[:300] + "...") if len(u) > 300 else u
-        a_short = (a[:300] + "...") if len(a) > 300 else a
-        lines.append(f"User: {u_short}")
-        if a_short:
-            lines.append(f"Engineer: {a_short}")
+    for user_msg, assistant_msg in pairs:
+        if user_msg is not None:
+            lines.append("User: " + _truncate_text(user_msg.content))
+        if assistant_msg is not None:
+            lines.append("Engineer: " + _truncate_text(assistant_msg.content))
+        lines.append("")  # blank line between pairs
 
-    return "\n".join(lines)
+    return "\n".join(lines).strip()
+
+
+# ---------------------------------------------------------------------------
+# Local refinement fallbacks (when model is None)
+# ---------------------------------------------------------------------------
+
+
+def _shorten_text_local(answer: str, max_chars: int = 400) -> str:
+    """Very naive local 'shortener' when Gemini is not available."""
+    if not answer:
+        return "No answer to shorten."
+    # Heuristic: keep first 2 paragraphs or up to max_chars
+    paragraphs = [p.strip() for p in answer.split("\n\n") if p.strip()]
+    if not paragraphs:
+        return _truncate_text(answer, max_chars=max_chars)
+    shortened = "\n\n".join(paragraphs[:2])
+    return _truncate_text(shortened, max_chars=max_chars)
+
+
+def _simplify_text_local(answer: str) -> str:
+    """Very simple 'explain simply' fallback."""
+    if not answer:
+        return "No answer to simplify."
+    first_para = answer.split("\n\n")[0].strip()
+    return (
+        "Here is a very short and simple version:\n\n"
+        + _truncate_text(first_para, max_chars=400)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Main answer generation
+# ---------------------------------------------------------------------------
 
 
 def answer_engineer(
@@ -570,159 +443,143 @@ def answer_engineer(
     live_state: Optional[Dict[str, Any]] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
 ) -> str:
-    """Answer a question as the race-engineer assistant.
-
-    Parameters
-    ----------
-    model:
-        Configured ``google.generativeai.GenerativeModel`` instance, or
-        ``None`` if Gemini is unavailable. The behaviour is still
-        useful in the ``None`` case but answers become more generic.
-    question:
-        Engineer's free-form question.
-    context:
-        Static context built by :func:`build_chat_context`.
-    live_state:
-        Optional live state snapshot from :mod:`live_state`.
-    chat_history:
-        Optional list of prior conversation turns. Each turn is a dict
-        with keys ``"role"`` ("user" or "assistant") and
-        ``"content"``.
-
-    Returns
-    -------
-    str
-        Markdown-formatted answer ready for display in Streamlit.
     """
+    Use Gemini to answer a race-engineering question, given static context and
+    optional current live_state and chat_history.
 
+    - Handles different modes (race_core, race_education, tool_help, smalltalk, offtopic).
+    - For smalltalk: replies locally and does not call Gemini.
+    - For other modes: uses Gemini if available; otherwise falls back to safe,
+      generic guidance.
+    """
     question = (question or "").strip()
     if not question:
-        return (
-            "I didn’t catch a question. Try asking something like:\n"
-            "- *Should we box now or stay out if there’s a safety car risk?*\n"
-            "- *How are our lap times trending in the last 5 laps?*\n"
-            "- *What does the Predictive Models tab actually do?*"
-        )
+        return "Please type a question for the race engineer copilot."
 
-    mode: IntentLiteral = _classify_question(question)
+    mode = _classify_question(question)
 
-    # ------------------------------------------------------------------
-    # Smalltalk is handled locally without the model for snappy replies.
-    # ------------------------------------------------------------------
+    # --- Smalltalk: do it locally, cheap and fast ---
     if mode == "smalltalk":
         greeting = (
             "Hey! 👋 I’m your race engineer assistant.\n\n"
             + _summarise_scope()
-            + "\n\nAsk me anything about your race, strategy, telemetry, or how to use this app."
+            + "\n\nYou can ask things like:\n"
+            "- \"If we box this lap, do we undercut the car ahead?\"\n"
+            "- \"How does tyre degradation affect our strategy at Barber?\"\n"
+            "- \"What does an undercut mean in racing?\""
         )
         return greeting
 
-    # ------------------------------------------------------------------
-    # Gemini unavailable -> graceful fallback paths per intent.
-    # ------------------------------------------------------------------
+    # --- No model available ---
     if model is None:
-        if mode in ("race_core", "race_education"):
+        if mode == "race_core":
             return (
-                "Gemini isn’t configured in this environment, so I can’t "
-                "provide data-aware answers.\n\n"
+                "Gemini is not configured in this environment, so I cannot read live "
+                "data or generate custom strategy text.\n\n"
                 + _summarise_scope()
-                + "\n\nHere are some general principles you can use right now:\n"
-                "- Always relate pit decisions to tyre state, fuel, and track position.\n"
-                "- Compare expected time loss of a pit stop vs degradation from staying out.\n"
-                "- Treat safety cars as cheap stops but beware of track position risk.\n"
-                "- Use your sector times and consistency to judge whether the driver can push or should manage."
+                + "\n\nGeneral race-strategy checklist:\n"
+                "- Estimate your current stint age and tyre performance window.\n"
+                "- Compare the time loss of a pit stop vs. the lap-time gain on fresh tyres.\n"
+                "- Consider track position: pitting might drop you into traffic.\n"
+                "- Weigh the probability of a Safety Car in the next 3–5 laps.\n"
+                "- Use your telemetry and timing data to refine the call."
+            )
+        if mode == "race_education":
+            return (
+                "Gemini is offline here, but I can give you a quick concept.\n\n"
+                "In general, many race strategy terms boil down to managing lap time,\n"
+                "tyre life, and track position. For more depth, try enabling Gemini\n"
+                "with a GEMINI_API_KEY and asking again."
             )
         if mode == "tool_help":
             return (
-                _summarise_app_tabs()
-                + "\n\nAI-specific features (chat, decision review, vision analysis) "
-                "require a configured Gemini API key. Right now I can only "
-                "describe the tools, not run them."
+                "This app provides several tools to support race engineering:\n"
+                "- Strategy Brain: analyse and compare pit strategies offline.\n"
+                "- Driver Insights: telemetry-based pace and sector analysis.\n"
+                "- Predictive Models: forecasts and risk assessments for lap times.\n"
+                "- Strategy Chat: this assistant for natural-language questions.\n"
+                "- Decision Reviewer: sanity-check proposed strategic calls.\n"
+                "- Vision: computer vision features for track and car analysis.\n\n"
+                "Currently, AI features are offline, so I cannot use Gemini-specific logic."
             )
         # offtopic
         return (
-            "That question is outside the scope of my race engineer role.\n\n"
+            "That question is mostly outside the scope of my race engineer role.\n\n"
             + _summarise_scope()
         )
 
-    # ------------------------------------------------------------------
-    # Gemini path starts here.
-    # ------------------------------------------------------------------
+    # --- Model is available: construct rich prompt ---
 
-    history_text = _summarise_history(chat_history)
+    history_text = _summarise_history_for_prompt(chat_history)
     live_text = _format_live_state_for_prompt(live_state)
 
-    # We include the intent so that the model can branch behaviour in a
-    # controllable way.
     prompt = textwrap.dedent(
         f"""
         You are a highly experienced GT race engineer working with a Toyota GR86 Cup car
-        and this specific Streamlit app.
+        and this specific Streamlit/telemetry app.
 
         ### Static race context
         {context}
 
-        ### Current live snapshot (may be approximate)
+        ### Current live snapshot (may be approximate or partially missing)
         {live_text}
 
-        ### Recent conversation (last few turns)
+        ### Recent conversation (oldest to newest)
         {history_text}
 
-        ### Assistant capabilities
-        {_summarise_scope()}
+        ### Question mode
+        The detected mode for this question is: {mode!r}
+        Valid modes: race_core, race_education, tool_help, smalltalk, offtopic.
 
-        ### App structure
-        {_summarise_app_tabs()}
+        ### Instructions by mode
 
-        ### Intent classification
-        The user question has been pre-classified as: **{mode}**
-        where intents mean:
-        - race_core: direct questions about lap times, stints, pit windows, tyres, or cautions.
-        - race_education: general questions about race engineering concepts.
-        - tool_help: questions about how to use the app, its tabs, or models.
-        - smalltalk: greetings or casual chatter.
-        - offtopic: questions that are not related to racing or the app.
-
-        ### Instructions per intent
-
-        - For **race_core**:
-          - Provide a structured answer with headings:
+        - For "race_core" (direct race engineering / strategy questions):
+          - Provide a structured answer with the following headings:
             ### Recommendation
             ### Rationale
             ### Risks & what to watch
             ### Next checks
-          - Use 3–8 concise bullet points overall.
-          - Ground everything in the numeric context or live snapshot where possible.
-          - If specific numeric values (lap times, gaps, tyre ages) are not present, do NOT invent them.
-          - Instead, speak qualitatively ("faster", "slower", "high risk") and describe what you would check.
+          - Use between 3 and 8 concise bullet points total.
+          - Base reasoning only on the static context, live snapshot, and prior conversation.
+          - If critical numbers (laps remaining, exact gaps, precise tyre age) are missing:
+            - DO NOT invent them.
+            - Under a heading **Missing info**, list up to 3 key data points that would change the decision.
+            - Give conditional logic, for example:
+              - "If we have <= 5 laps left, then ..."
+              - "If the Safety Car probability is low, then ..."
 
-        - For **race_education**:
-          - Give a clear, beginner-friendly explanation of the concept.
-          - Relate the explanation back to GR Cup / GT-style racing when relevant.
-          - Keep the answer within 4–8 short paragraphs or bullet points.
+        - For "race_education" (explain racing concepts):
+          - Explain the concept clearly as if to a junior race engineer.
+          - Use plain language first, then give a short more-technical note.
+          - Provide 1–2 concrete examples from GT / sprint racing.
+          - Do NOT fabricate specific lap times or car IDs.
 
-        - For **tool_help**:
-          - Explain how to use the relevant parts of the app
-            (Strategy Brain, Driver Insights, Predictive Models,
-             Strategy Chat, Live Race Copilot, Vision).
-          - Use concrete steps and references to sliders / buttons when helpful.
-          - Do not make up track or race data.
+        - For "tool_help" (questions about the app itself):
+          - Focus on explaining how to use the relevant tabs:
+            * Strategy Brain
+            * Driver Insights
+            * Predictive Models
+            * Strategy Chat
+            * Live Race Copilot
+            * Vision
+          - Clearly separate what the app can do vs. what it cannot.
+          - Do not make up fake telemetry or secrets.
+          - If context is insufficient (e.g., we don't know which tab is visible),
+            ask the user to specify.
 
-        - For **offtopic**:
+        - For "offtopic":
           - Politely say the question is not race-related.
-          - Optionally provide a short generic answer if it is safe.
-          - Then steer the conversation back to race-engineering topics with 1–3 suggestions.
+          - Optionally provide a very short generic answer (1–2 sentences).
+          - Then steer the user back to race-engineering, suggesting 2–3 example questions.
 
-        In **all** cases:
-        - If critical information is missing (e.g., laps remaining, tyre age, gaps),
-          include a short section called "Missing info" listing what you would need.
-        - You may propose simple "if/then" branches when the answer depends on unknowns
-          (e.g., "If we expect a safety car in the next 3 laps, then box now; otherwise stay out").
-        - Never claim that you can see live video or images unless such data is explicitly described
-          in the context or live snapshot.
-        - When the user question is ambiguous, explain the ambiguity and give 1–3 concrete follow-up questions.
+        - Always:
+          - Be honest about uncertainty and missing information.
+          - Avoid hallucinating precise numbers (lap times, gaps, fuel levels, tyre ages).
+          - If clarification is needed, end the response with a section:
+            ### Follow-up questions
+            and list 1–3 concrete questions back to the engineer.
 
-        User question:
+        ### Engineer's question
         {question}
         """
     ).strip()
@@ -733,5 +590,155 @@ def answer_engineer(
         if not text:
             return "No answer returned by the model."
         return text
-    except Exception as e:  # pragma: no cover - defensive path
+    except Exception as e:
         return f"(Gemini chat error: {e})"
+
+
+# ---------------------------------------------------------------------------
+# Refinement of existing answers
+# ---------------------------------------------------------------------------
+
+
+def refine_answer(
+    model: Optional[genai.GenerativeModel],
+    base_answer: str,
+    question: str,
+    action: RefineAction,
+    context: str,
+    live_state: Optional[Dict[str, Any]] = None,
+    chat_history: Optional[List[Dict[str, str]]] = None,
+) -> str:
+    """
+    Refine a previously generated answer according to the requested action.
+
+    This is used by UI buttons like:
+      - "Shorten"
+      - "More detail"
+      - "Visualize in plots"
+      - "Explain simply"
+
+    We treat the previous answer as a draft that we want to transform, not replace
+    from scratch (so we include it in the prompt).
+    """
+    base_answer = (base_answer or "").strip()
+    question = (question or "").strip()
+
+    if not base_answer:
+        return "There is no previous answer to refine."
+
+    if model is None:
+        # Fallbacks when Gemini is unavailable
+        if action == "shorten":
+            return _shorten_text_local(base_answer)
+        if action == "simplify":
+            return _simplify_text_local(base_answer)
+        if action == "more_detail":
+            return (
+                "Gemini is not configured, so I cannot safely expand this answer.\n\n"
+                "You can ask a more specific follow-up, for example:\n"
+                "- \"Explain more about tyre degradation in this stint.\"\n"
+                "- \"Walk me through how you would compare 1-stop vs 2-stop here.\""
+            )
+        if action == "visualize":
+            return (
+                "Gemini is not configured, but here are some plot ideas you can implement "
+                "in your notebooks or app:\n\n"
+                "- Lap time vs lap number for the current stint.\n"
+                "- Gap to car ahead/behind vs lap number.\n"
+                "- Tyre-related metrics (e.g. APS mean vs lap) to visualise degradation."
+            )
+        return "Unknown refinement action."
+
+    history_text = _summarise_history_for_prompt(chat_history)
+    live_text = _format_live_state_for_prompt(live_state)
+
+    # Action-specific instruction snippet
+    if action == "shorten":
+        action_block = textwrap.dedent(
+            """
+            You will:
+            - Keep the core recommendation and reasoning.
+            - Rewrite the answer to be much shorter and punchier.
+            - Target at most 3–6 short bullet points.
+            - Keep the structure if useful (e.g., headings), but brevity is more important.
+            """
+        ).strip()
+    elif action == "more_detail":
+        action_block = textwrap.dedent(
+            """
+            You will:
+            - Expand the existing answer with more detailed reasoning.
+            - Make implicit logic explicit (e.g., how tyre deg and pit windows interact).
+            - Use concrete but approximate language without inventing exact numbers.
+            - Stay under about 350 words.
+            """
+        ).strip()
+    elif action == "visualize":
+        action_block = textwrap.dedent(
+            """
+            You will:
+            - Propose 1–3 specific plots that the race engineer could create.
+            - For each plot, provide:
+              * A short title.
+              * What goes on the x-axis and y-axis.
+              * What pattern to look for.
+            - Optionally include tiny pseudocode snippets in Python using pandas and matplotlib
+              (no need to be fully runnable; clarity over perfection).
+            - Do NOT claim that plots already exist; you are suggesting what to build.
+            """
+        ).strip()
+    elif action == "simplify":
+        action_block = textwrap.dedent(
+            """
+            You will:
+            - Rewrite the answer so that a new race engineer or interested fan can understand it.
+            - Explain technical terms like 'undercut', 'stint', 'deg' in plain language.
+            - Preserve the main recommendation, but reduce jargon.
+            - Keep the answer focused and under about 250 words.
+            """
+        ).strip()
+    else:
+        return "Unknown refinement action."
+
+    prompt = textwrap.dedent(
+        f"""
+        You are refining a previous answer from a GT race engineer assistant.
+
+        ### Static race context
+        {context}
+
+        ### Current live snapshot (may be approximate or partially missing)
+        {live_text}
+
+        ### Recent conversation (oldest to newest)
+        {history_text}
+
+        ### Original question
+        {question}
+
+        ### Original answer to refine
+        {base_answer}
+
+        ### Refinement action
+        The requested refinement action is: {action!r}
+
+        ### What you must do
+        {action_block}
+
+        ### General rules
+        - Do not contradict the original answer unless it is clearly unsafe or illogical.
+        - Do not invent precise lap times, gaps, fuel levels, or tyre ages.
+        - If the original answer seems to lack critical information, you may add a short
+          'Missing info' note.
+        - Return ONLY the refined answer text, with no extra commentary about the process.
+        """
+    ).strip()
+
+    try:
+        resp = model.generate_content(prompt)
+        text = (resp.text or "").strip()
+        if not text:
+            return "No refined answer returned by the model."
+        return text
+    except Exception as e:
+        return f"(Gemini refine error: {e})"
