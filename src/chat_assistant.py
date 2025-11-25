@@ -1,7 +1,19 @@
 from __future__ import annotations
 
 """
-Chat assistant """
+Chat assistant for the Toyota DataSense project.
+
+Goals:
+- Act as a specialised GT race engineer copilot.
+- Use static race context, live_state snapshots, and conversation history.
+- Support refinement actions: shorten, more detail, visualize, simplify.
+- Adapt answer style to user preferences inferred from past interactions.
+- Be robust to off-topic or general-purpose questions and gently steer
+  back toward race engineering when needed.
+
+Note: This module uses simple, heuristic "preference learning" and
+history summarisation. It is **not** full reinforcement learning.
+"""
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Literal, Tuple
@@ -11,20 +23,25 @@ import textwrap
 
 import pandas as pd
 import google.generativeai as genai
-#
+
 
 ChatRole = Literal["user", "assistant", "system"]
 QuestionMode = Literal["race_core", "race_education", "tool_help", "smalltalk", "offtopic"]
 RefineAction = Literal["shorten", "more_detail", "visualize", "simplify"]
 
+Verbosity = Literal["short", "medium", "long"]
+ExplainStyle = Literal["technical", "balanced", "simple"]
 
-# Data 
+
+# ---------------------------------------------------------------------------
+# Data structures
+# ---------------------------------------------------------------------------
 
 
 @dataclass
 class ChatMessage:
-    """S
-    imple representation of a chat message for prompt construction   """
+    """Simple representation of a chat message for prompt construction."""
+
     role: ChatRole
     content: str
     meta: Optional[Dict[str, Any]] = None
@@ -40,7 +57,39 @@ class ChatMessage:
         return ChatMessage(role=role, content=content, meta=meta)
 
 
-# Pace and context helpers 
+@dataclass
+class UserPreferences:
+    """Very lightweight, heuristic "preference model" inferred from chat history.
+
+    This is NOT full reinforcement learning; it's simple pattern-based
+    adaptation:
+    - If user keeps asking "shorter", we bias toward short answers.
+    - If user keeps saying "more detail", we bias toward long answers.
+    - If user keeps asking for plots, we flag that they like visualisation ideas.
+    - If user often expresses dissatisfaction ("this is wrong", "not accurate"),
+      we bias toward clearer, more cautious explanations.
+    """
+
+    verbosity: Verbosity = "medium"
+    explain_style: ExplainStyle = "balanced"
+    likes_plots: bool = False
+    cautious: bool = False
+
+    def as_bullet_block(self) -> str:
+        """Format preferences as a bullet list for prompting."""
+        return textwrap.dedent(
+            f"""
+            - Preferred verbosity: {self.verbosity}
+            - Explanation style: {self.explain_style}
+            - Likes plot suggestions: {self.likes_plots}
+            - Prefers cautious tone: {self.cautious}
+            """
+        ).strip()
+
+
+# ---------------------------------------------------------------------------
+# Pace and context helpers
+# ---------------------------------------------------------------------------
 
 
 def _summarise_driver_pace(lap_df: pd.DataFrame) -> str:
@@ -82,11 +131,10 @@ def build_chat_context(
     race: str,
     car_id: str,
 ) -> str:
-    """
-    Build a textual context block for the strategy chat.
+    """Build a textual context block for the strategy chat.
 
     Parameters
-   HIHIHIHI
+    ----------
     lap_df:
         Per-lap telemetry features for this car / race.
     track_meta:
@@ -112,6 +160,9 @@ def build_chat_context(
 
     pace_block = _summarise_driver_pace(lap_df)
 
+    base_lap_str = f"{base_lap:.3f} s" if base_lap is not None else "unknown"
+    pit_loss_str = f"{pit_loss:.3f} s" if pit_loss is not None else "unknown"
+
     header = textwrap.dedent(
         f"""
         Track & session:
@@ -119,8 +170,8 @@ def build_chat_context(
         - Race: {race}
         - Car: {car_id}
         - Total race laps: {total_laps if total_laps is not None else "unknown"}
-        - Base clean lap (trimmed median): {base_lap:.3f} s
-        - Pit lane loss (green): {pit_loss:.3f} s
+        - Base clean lap (trimmed median): {base_lap_str}
+        - Pit lane loss (green): {pit_loss_str}
         """
     ).strip()
 
@@ -142,35 +193,102 @@ def _format_live_state_for_prompt(live_state: Optional[Dict[str, Any]]) -> str:
     try:
         cleaned = dict(live_state)
 
+        # Remove noisy fields that change every frame
         cleaned.pop("timestamp", None)
         cleaned.pop("debug", None)
         return json.dumps(cleaned, indent=2)
     except Exception:
         return "Live state provided but could not be serialised cleanly."
-    
-#classify
 
-# damn bro helpers
 
-from typing import Tuple
+def _summarise_live_state_naturally(live_state: Optional[Dict[str, Any]]) -> str:
+    """Optional human-readable summary derived from live_state.
+
+    We keep this conservative: no assumptions, only describe keys that exist.
+    """
+    if not isinstance(live_state, dict):
+        return "Live state summary: unavailable."
+
+    parts: List[str] = []
+
+    current_lap = live_state.get("current_lap")
+    max_lap = live_state.get("max_lap")
+    stint_lap = live_state.get("stint_lap")
+    tyre_phase = live_state.get("tyre_phase")
+    gap_ahead = live_state.get("gap_ahead_s")
+    gap_behind = live_state.get("gap_behind_s")
+
+    if current_lap is not None and max_lap is not None:
+        try:
+            frac = float(current_lap) / float(max_lap)
+            pct = int(round(frac * 100))
+            parts.append(f"Laps: {current_lap}/{max_lap} (~{pct}% of race distance).")
+        except Exception:
+            parts.append(f"Laps: {current_lap}/{max_lap}.")
+    elif current_lap is not None:
+        parts.append(f"Current lap: {current_lap} (total laps unknown).")
+
+    if stint_lap is not None:
+        parts.append(f"Stint lap: {stint_lap} (laps since last stop).")
+
+    if tyre_phase:
+        parts.append(f"Tyre phase: {tyre_phase} (e.g., warm-up / stable / degradation).")
+
+    if gap_ahead is not None:
+        parts.append(f"Gap to car ahead (s): {gap_ahead}.")
+    if gap_behind is not None:
+        parts.append(f"Gap to car behind (s): {gap_behind}.")
+
+    if not parts:
+        return "Live state summary: keys present but no standard lap / stint / gap fields detected."
+
+    return "Live state summary: " + " ".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Preference / "reinforcement-style" helpers
+# ---------------------------------------------------------------------------
+
 
 def _detect_refine_action_from_text(question: str) -> Optional[RefineAction]:
-    """
-    Detect if the question is a request to refine the previous answer,
-    and return the corresponding RefineAction if so.
-    """
-    q = question.lower()
+    """Detect if the question is a request to refine the previous answer."""
+    q = (question or "").lower()
     shorten_words = [
-        "shorter", "shorten", "too long", "more concise", "summarise", "summarize"
+        "shorter",
+        "shorten",
+        "too long",
+        "more concise",
+        "summarise",
+        "summarize",
     ]
     more_detail_words = [
-        "longer", "expand", "more detail", "more details", "elaborate", "tell me more", "go deeper"
+        "longer",
+        "expand",
+        "more detail",
+        "more details",
+        "elaborate",
+        "tell me more",
+        "go deeper",
     ]
     simplify_words = [
-        "simpler", "simple", "explain like i'm five", "eli5", "easier to understand", "in simple terms"
+        "simpler",
+        "simple",
+        "explain like i'm five",
+        "eli5",
+        "easier to understand",
+        "in simple terms",
     ]
     visualize_words = [
-        "plot", "plots", "graph", "graphs", "visualise", "visualize", "chart", "charts", "show this in a plot", "visualize in plots"
+        "plot",
+        "plots",
+        "graph",
+        "graphs",
+        "visualise",
+        "visualize",
+        "chart",
+        "charts",
+        "show this in a plot",
+        "visualize in plots",
     ]
     if any(word in q for word in shorten_words):
         return "shorten"
@@ -183,10 +301,91 @@ def _detect_refine_action_from_text(question: str) -> Optional[RefineAction]:
     return None
 
 
-def _get_last_turn(chat_history: Optional[List[Dict[str, str]]]) -> Tuple[Optional[ChatMessage], Optional[ChatMessage]]:
+def _infer_user_preferences(chat_history: Optional[List[Dict[str, Any]]]) -> UserPreferences:
+    """Heuristically infer user preferences from past messages.
+
+    This is a very small, stateless approximation of "learning" from user
+    behaviour:
+    - Count how often they ask for shorter vs longer vs simpler.
+    - Check if they often mention plots / visualisation.
+    - Check for explicit negative feedback about answers to bias toward
+      clearer, more cautious responses.
+    """
+    prefs = UserPreferences()
+    if not chat_history:
+        return prefs
+
+    messages = _normalise_history(chat_history)
+
+    shorten_count = 0
+    more_detail_count = 0
+    simplify_count = 0
+    plot_count = 0
+    negative_feedback_count = 0
+
+    neg_phrases = [
+        "this is wrong",
+        "not accurate",
+        "inaccurate",
+        "you hallucinated",
+        "hallucination",
+        "doesn't make sense",
+        "does not make sense",
+        "not helpful",
+        "bad answer",
+        "terrible answer",
+    ]
+
+    for msg in messages:
+        if msg.role != "user":
+            continue
+        action = _detect_refine_action_from_text(msg.content)
+        if action == "shorten":
+            shorten_count += 1
+        elif action == "more_detail":
+            more_detail_count += 1
+        elif action == "simplify":
+            simplify_count += 1
+        elif action == "visualize":
+            plot_count += 1
+
+        text_lower = msg.content.lower()
+        if any(word in text_lower for word in ["plot", "graph", "visualize", "visualise"]):
+            plot_count += 1
+        if any(phrase in text_lower for phrase in neg_phrases):
+            negative_feedback_count += 1
+
+    # Decide verbosity
+    if shorten_count > more_detail_count and shorten_count >= 1:
+        prefs.verbosity = "short"
+    elif more_detail_count > shorten_count and more_detail_count >= 1:
+        prefs.verbosity = "long"
+    else:
+        prefs.verbosity = "medium"
+
+    # Decide explanation style
+    if simplify_count >= 1:
+        prefs.explain_style = "simple"
+    elif more_detail_count >= 2:
+        prefs.explain_style = "technical"
+    else:
+        prefs.explain_style = "balanced"
+
+    prefs.likes_plots = plot_count >= 1
+    prefs.cautious = negative_feedback_count >= 1
+
+    return prefs
+
+
+# ---------------------------------------------------------------------------
+# Question classification
+# ---------------------------------------------------------------------------
+
+
+def _get_last_turn(chat_history: Optional[List[Dict[str, Any]]]) -> Tuple[Optional[ChatMessage], Optional[ChatMessage]]:
     """
     Return last user question and assistant answer as (last_question, last_answer).
-    last_question: most recent user message bÈore the last assistant message.
+    last_question: most recent user message before the last assistant message.
     last_answer: most recent assistant message.
     """
     messages = _normalise_history(chat_history)
@@ -339,10 +538,12 @@ def _summarise_scope() -> str:
     )
 
 
+# ---------------------------------------------------------------------------
 # Chat history handling
+# ---------------------------------------------------------------------------
 
 
-def _normalise_history(chat_history: Optional[List[Dict[str, str]]]) -> List[ChatMessage]:
+def _normalise_history(chat_history: Optional[List[Dict[str, Any]]]) -> List[ChatMessage]:
     """Convert raw chat history list of dicts into ChatMessage objects."""
     if not chat_history:
         return []
@@ -410,9 +611,9 @@ def _truncate_text(s: str, max_chars: int = 350) -> str:
     return s[: max_chars - 3] + "..."
 
 
-def _summarise_history_for_prompt(chat_history: Optional[List[Dict[str, str]]]) -> str:
+def _summarise_history_for_prompt(chat_history: Optional[List[Dict[str, Any]]]) -> str:
     """
-    Turn the last few conversation turn s into a compact text block for prompting.
+    Turn the last few conversation turns into a compact text block for prompting.
 
     This is what actually makes the assistant aware of what has been said.
     """
@@ -432,7 +633,11 @@ def _summarise_history_for_prompt(chat_history: Optional[List[Dict[str, str]]]) 
 
     return "\n".join(lines).strip()
 
-#more model refine after heree
+
+# ---------------------------------------------------------------------------
+# Local refinement helpers
+# ---------------------------------------------------------------------------
+
 
 def _shorten_text_local(answer: str, max_chars: int = 400) -> str:
     """Very naive local 'shortener' when Gemini is not available."""
@@ -457,12 +662,17 @@ def _simplify_text_local(answer: str) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# Core answer function
+# ---------------------------------------------------------------------------
+
+
 def answer_engineer(
     model: Optional[genai.GenerativeModel],
     question: str,
     context: str,
     live_state: Optional[Dict[str, Any]] = None,
-    chat_history: Optional[List[Dict[str, str]]] = None,
+    chat_history: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """
     Use Gemini to answer a race-engineering question, given static context and
@@ -496,6 +706,7 @@ def answer_engineer(
         )
 
     mode = _classify_question(question)
+    prefs = _infer_user_preferences(chat_history)
 
     # --- Smalltalk: do it locally, cheap and fast ---
     if mode == "smalltalk":
@@ -551,6 +762,23 @@ def answer_engineer(
 
     history_text = _summarise_history_for_prompt(chat_history)
     live_text = _format_live_state_for_prompt(live_state)
+    live_summary = _summarise_live_state_naturally(live_state)
+
+    # Verbosity guidance for race_core mode
+    if prefs.verbosity == "short":
+        race_core_bullets = "Target around 3–4 very short bullet points."
+    elif prefs.verbosity == "long":
+        race_core_bullets = "You may use up to 7–8 concise bullet points if helpful."
+    else:
+        race_core_bullets = "Use about 4–6 concise bullet points."
+
+    explain_style_hint = {
+        "simple": "Use plain language first; treat the user as an interested but non-expert fan.",
+        "technical": "You may lean a bit more on technical language suitable for an experienced engineer.",
+        "balanced": "Use clear language with light technical detail, suitable for a junior race engineer.",
+    }[prefs.explain_style]
+
+    prefs_block = prefs.as_bullet_block()
 
     prompt = textwrap.dedent(
         f"""
@@ -563,8 +791,14 @@ def answer_engineer(
         ### Current live snapshot (may be approximate or partially missing)
         {live_text}
 
+        ### Human-readable live summary (derived, may be partial)
+        {live_summary}
+
         ### Recent conversation (oldest to newest)
         {history_text}
+
+        ### Inferred user preferences (heuristic)
+        {prefs_block}
 
         ### Question mode
         The detected mode for this question is: {mode!r}
@@ -578,7 +812,8 @@ def answer_engineer(
             ### Rationale
             ### Risks & what to watch
             ### Next checks
-          - Use between 3 and 8 concise bullet points total.
+          - {race_core_bullets}
+          - {explain_style_hint}
           - Base reasoning only on the static context, live snapshot, and prior conversation.
           - If critical numbers (laps remaining, exact gaps, precise tyre age) are missing:
             - DO NOT invent them.
@@ -608,7 +843,7 @@ def answer_engineer(
 
         - For "offtopic":
           - Politely say the question is not race-related.
-          - Optionally provide a very short generic answer (1–2 sentences).
+          - You may provide a very short generic answer (1–2 sentences) if it is safe and neutral.
           - Then steer the user back to race-engineering, suggesting 2–3 example questions.
 
         - Always:
@@ -645,7 +880,7 @@ def refine_answer(
     action: RefineAction,
     context: str,
     live_state: Optional[Dict[str, Any]] = None,
-    chat_history: Optional[List[Dict[str, str]]] = None,
+    chat_history: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     """
     Refine a previously generated answer according to the requested action.
@@ -690,6 +925,7 @@ def refine_answer(
 
     history_text = _summarise_history_for_prompt(chat_history)
     live_text = _format_live_state_for_prompt(live_state)
+    live_summary = _summarise_live_state_naturally(live_state)
 
     # Action-specific instruction snippet
     if action == "shorten":
@@ -748,6 +984,9 @@ def refine_answer(
 
         ### Current live snapshot (may be approximate or partially missing)
         {live_text}
+
+        ### Human-readable live summary (derived, may be partial)
+        {live_summary}
 
         ### Recent conversation (oldest to newest)
         {history_text}

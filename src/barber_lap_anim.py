@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import os
 import json
+import time
 
 import numpy as np
 import pandas as pd
@@ -11,7 +12,12 @@ from matplotlib.animation import FuncAnimation
 import matplotlib.image as mpimg
 from matplotlib.widgets import Slider
 
-from live_state import save_live_state  # NEW: for live JSON export
+# Robust import for live_state when run either as a module or script
+try:
+    from live_state import save_live_state  # same folder (src/)
+except ImportError:  # pragma: no cover - fallback for some IDE/run configs
+    from src.live_state import save_live_state  # type: ignore
+
 
 # ---------- Gemini ----------
 
@@ -22,6 +28,7 @@ try:
     HAVE_GEMINI = bool(GEMINI_API_KEY)
     if HAVE_GEMINI:
         genai.configure(api_key=GEMINI_API_KEY)
+        # Hard-coded default; you can override via env in other components if needed
         GEMINI_MODEL_NAME = "gemini-2.5-flash"
     else:
         GEMINI_MODEL_NAME = ""
@@ -29,6 +36,7 @@ except Exception:
     HAVE_GEMINI = False
     GEMINI_API_KEY = ""
     GEMINI_MODEL_NAME = ""
+
 
 # ---------- paths ----------
 
@@ -50,7 +58,9 @@ BARBER_INSIGHTS_PATH = REPO_ROOT / "notes" / "barber_notebook_insights.txt"
 
 # ---------- track geometry ----------
 
+
 def load_track_points() -> tuple[np.ndarray, np.ndarray]:
+    """Load digitised Barber centerline and upsample to a smooth polyline."""
     # Use smoothed points if available
     if TRACK_GEOM_CSV_S.exists():
         df = pd.read_csv(TRACK_GEOM_CSV_S)
@@ -73,6 +83,7 @@ def load_car_icon(path: Path) -> np.ndarray:
 
 # ---------- lap data & strategy ----------
 
+
 def _find_col(df: pd.DataFrame, keywords: list[str], default: str | None = None) -> str:
     for c in df.columns:
         lc = c.lower()
@@ -86,6 +97,7 @@ def _find_col(df: pd.DataFrame, keywords: list[str], default: str | None = None)
 
 
 def load_lap_data(path: Path) -> pd.DataFrame:
+    """Load pre-computed lap features for Barber R2 GR86-002-000."""
     if not path.exists():
         raise FileNotFoundError(
             f"Lap-features CSV not found at {path}\n"
@@ -160,15 +172,13 @@ def load_lap_data(path: Path) -> pd.DataFrame:
         if gap_behind_col
         else np.nan
     )
-    df["position"] = (
-        pd.to_numeric(df[pos_col], errors="coerce") if pos_col else np.nan
-    )
+    df["position"] = pd.to_numeric(df[pos_col], errors="coerce") if pos_col else np.nan
 
     return df
 
 
 def load_strategy_summary(path: Path, total_laps: int) -> int:
-    # Ideal pit lap from multiverse; fallback to mid-race
+    """Get an approximate ideal pit lap from a multiverse summary CSV."""
     if not path.exists():
         return max(6, total_laps // 2)
 
@@ -197,6 +207,7 @@ def load_strategy_summary(path: Path, total_laps: int) -> int:
 
 
 def build_metrics_table(laps: pd.DataFrame, ideal_pit_lap: int) -> list[dict]:
+    """Build per-lap metrics for the race engineer console + live JSON."""
     laps = laps.copy()
     total_laps = int(laps["lap_no"].max())
     race_laps = laps[~laps["is_pit_lap"]].copy()
@@ -216,7 +227,7 @@ def build_metrics_table(laps: pd.DataFrame, ideal_pit_lap: int) -> list[dict]:
     except Exception:
         slope, intercept = 0.0, best_lap
 
-    # Caution laps
+    # Caution laps (from status or a simple synthetic pattern)
     caution_laps: set[int] = set()
     if "track_status" in laps.columns:
         for row in laps.itertuples(index=False):
@@ -404,8 +415,10 @@ def build_metrics_table(laps: pd.DataFrame, ideal_pit_lap: int) -> list[dict]:
 
 # ---------- notebooks + gemini ----------
 
+
 def load_notebook_insights() -> str:
-    notes = []
+    """Load any Barber-related markdown snippets from notebooks / notes."""
+    notes: list[str] = []
 
     # Optional text file you created
     if BARBER_INSIGHTS_PATH.exists():
@@ -436,6 +449,7 @@ def load_notebook_insights() -> str:
 
 
 def gemini_insight(metrics: dict, base_notes: str) -> str:
+    """Call Gemini (if available) for short race-engineer bullet points."""
     if not HAVE_GEMINI or not GEMINI_API_KEY:
         return ""
 
@@ -465,7 +479,9 @@ Return ONLY the bullet points.
 
 # ---------- main animation ----------
 
+
 def main() -> None:
+    """Run the live Barber simulation window and stream JSON state."""
     if not TRACK_MAP_PATH.exists():
         raise FileNotFoundError(f"Track map not found at {TRACK_MAP_PATH}")
     if not CAR_ICON_PATH.exists():
@@ -478,6 +494,9 @@ def main() -> None:
 
     base_notes = load_notebook_insights()
     gem_cache: dict[int, str] = {}
+
+    # Unique session id for this run (used in live_state to distinguish runs)
+    session_id = f"barber_{int(time.time())}"
 
     bg_img = plt.imread(TRACK_MAP_PATH)
     xs, ys = load_track_points()
@@ -755,8 +774,7 @@ def main() -> None:
         ax_info.text(
             0.03,
             0.20,
-            "Engineer call this lap:\n"
-            + metrics["recommendation"],
+            "Engineer call this lap:\n" + metrics["recommendation"],
             transform=ax_info.transAxes,
             fontsize=10,
             va="top",
@@ -798,6 +816,8 @@ def main() -> None:
 
         live_state = {
             "track_id": "barber",
+            "session_id": session_id,
+            "frame_index": int(frame),
             "lap_no": int(metrics["lap_no"]),
             "total_laps": int(metrics["total_laps"]),
             "stint_lap": int(metrics["stint_lap"]),

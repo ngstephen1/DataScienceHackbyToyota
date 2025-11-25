@@ -1,9 +1,11 @@
 from __future__ import annotations
 from src import race_plots
+from src.chat_assistant import build_chat_context, answer_engineer
+from src.live_state import load_live_state
 from src.decision_reviewer import review_decision
 from src.predictive_models import predict_lap_times_for
-from src.chat_assistant import build_chat_context, answer_engineer
 from src.vision_gemini import analyze_race_image
+from src.live_state import get_live_state_path, save_live_state  # <-- shared live-state helpers
 from pathlib import Path
 import sys
 import time
@@ -27,28 +29,6 @@ TRACK_GEOM_DIR = DATA_ROOT / "track_geom"
 VISION_DIR = DATA_ROOT / "vision"
 VISION_DIR.mkdir(parents=True, exist_ok=True)
 SAMPLE_VISION_IMG = VISION_DIR / "sample_gr86_barber.png"
-
-# ---------- Local live-state writer (shared with Tk car-map viewer) ----------
-LIVE_DIR = DATA_ROOT / "live"
-LIVE_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def get_live_state_path(session_id: str = "barber") -> Path:
-    safe_id = session_id.replace("/", "_")
-    return LIVE_DIR / f"live_state_{safe_id}.json"
-
-
-def save_live_state(session_id: str, payload: dict) -> None:
-    stamped = dict(payload)
-    stamped.setdefault("session_id", session_id)
-    stamped["saved_at"] = time.time()
-
-    out_path = get_live_state_path(session_id)
-    tmp_path = out_path.with_suffix(".tmp")
-    with tmp_path.open("w", encoding="utf-8") as f:
-        json.dump(stamped, f, ensure_ascii=False, indent=2)
-    tmp_path.replace(out_path)
-
 
 from track_meta import TRACK_METAS  # type: ignore
 from strategy_engine import (      # type: ignore
@@ -288,6 +268,9 @@ track_id = track_options[track_label]
 
 race = st.sidebar.selectbox("Race", ["R2", "R1"], index=0)
 car_id = st.sidebar.text_input("Car ID", value="GR86-002-000")
+
+# Shared live session id for this (track, race, car) combo
+SESSION_ID = f"{track_id}_{race}_{car_id}"
 
 n_sims = st.sidebar.slider(
     "Mini multiverse size (simulations)",
@@ -869,7 +852,7 @@ with tab_chat:
             with st.spinner("Thinking like a race engineer..."):
                 # Optional: bring in latest live state if running the Live tab in parallel
                 live_state = None
-                live_state_path = get_live_state_path("barber")
+                live_state_path = get_live_state_path(SESSION_ID)
                 if live_state_path.exists():
                     try:
                         live_state = json.loads(live_state_path.read_text(encoding="utf-8"))
@@ -959,7 +942,7 @@ with tab_chat:
 
                     with st.spinner("Refining the last answer..."):
                         live_state = None
-                        live_state_path = get_live_state_path("barber")
+                        live_state_path = get_live_state_path(SESSION_ID)
                         if live_state_path.exists():
                             try:
                                 live_state = json.loads(
@@ -1145,7 +1128,7 @@ with tab_live:
                         }
                     )
 
-                    # ---- write shared live state for the Barber map animation ----
+                    # ---- write shared live state for the Barber map animation and chat ----
                     x_norm, y_norm = None, None
                     if track_id == "barber-motorsports-park":
                         x_norm, y_norm = barber_lap_to_xy(lap, max_lap)
@@ -1169,8 +1152,8 @@ with tab_live:
                         "gemini_insight": insight_text,
                         "timestamp": time.time(),
                     }
-                    # single shared “barber” session (you can make this per-combo if you want)
-                    save_live_state("barber", live_state_payload)
+                    # shared session id for this combo
+                    save_live_state(SESSION_ID, live_state_payload)
 
                     # ---- engineering radio feed ----
                     with feed_placeholder.container():
