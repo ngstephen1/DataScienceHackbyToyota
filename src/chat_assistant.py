@@ -171,3 +171,4 @@ def answer_engineer(
         return text
     except Exception as e:
         return f"(Gemini chat error: {e})"
+ 
